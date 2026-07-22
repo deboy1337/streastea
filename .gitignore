@@ -1,0 +1,16 @@
+# Build
+*.cs3
+Serienstream/build/
+.gradle/
+.kotlin/
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS
+.DS_Store
+Thumbs.db

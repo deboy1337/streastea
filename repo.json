@@ -1,0 +1,8 @@
+{
+  "name": "Serienstream.to Repository",
+  "description": "CloudStream Plugin fuer Serienstream.to (v2)",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/Streamable/serienstream-plugin/builds/plugins.json"
+  ]
+}
