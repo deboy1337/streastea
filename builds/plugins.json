@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Serienstream",
+    "filename": "Serienstream",
+    "size": 15306,
+    "hash": "38689bc6103775f79a16ed0724c41fbe76a7b05bd733df74ba577b0bbf1d31d7",
+    "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
+    "version": 1,
+    "status": 1,
+    "tvTypes": ["TvSeries"],
+    "language": "de",
+    "description": "Serien online ansehen und streamen - Serienstream.to (v2)",
+    "authors": ["Streamable"],
+    "iconUrl": "https://www.google.com/s2/favicons?domain=https://serienstream.to&sz=%size%"
+  }
+]
