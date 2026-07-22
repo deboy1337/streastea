@@ -1,5 +1,7 @@
 package com.example.serienstream
 
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
@@ -32,10 +34,42 @@ open class SerienstreamProvider : MainAPI() {
     override val hasMainPage = true
     override var lang = "de"
 
+    private var isLoggedIn = false
+
+    private suspend fun ensureLoggedIn() {
+        if (isLoggedIn) return
+
+        val email = getKey<String>(SETTING_EMAIL)
+        val password = getKey<String>(SETTING_PASSWORD)
+
+        if (email.isNullOrBlank() || password.isNullOrBlank()) return
+
+        try {
+            val loginPage = app.get("$mainUrl/login").document
+            val csrfToken = loginPage.selectFirst("input[name='_token']")?.attr("value")
+                ?: return
+
+            val loginResp = app.post(
+                "$mainUrl/login",
+                data = mapOf(
+                    "_token" to csrfToken,
+                    "email" to email,
+                    "password" to password
+                ),
+                headers = mapOf(
+                    "Referer" to "$mainUrl/login"
+                )
+            )
+
+            isLoggedIn = !loginResp.url.contains("/login")
+        } catch (_: Exception) { }
+    }
+
     override suspend fun getMainPage(
         page: Int,
         request: MainPageRequest
     ): HomePageResponse {
+        ensureLoggedIn()
         val document = app.get("$mainUrl/beliebte-serien").document
 
         val items = document.select("a.show-card").mapNotNull {
@@ -51,6 +85,7 @@ open class SerienstreamProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        ensureLoggedIn()
         val document = app.get(
             "$mainUrl/search",
             params = mapOf("q" to query)
@@ -134,6 +169,7 @@ open class SerienstreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        ensureLoggedIn()
         val document = app.get(data).document
         document.select("button.link-box[data-play-url]").amap { button ->
             val playUrl = button.attr("data-play-url").trim()
@@ -182,5 +218,10 @@ open class SerienstreamProvider : MainAPI() {
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
         }
+    }
+
+    companion object {
+        const val SETTING_EMAIL = "serienstream_email"
+        const val SETTING_PASSWORD = "serienstream_password"
     }
 }
