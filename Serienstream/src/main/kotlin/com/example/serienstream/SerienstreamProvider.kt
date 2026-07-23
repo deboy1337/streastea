@@ -286,7 +286,7 @@ open class SerienstreamProvider : MainAPI() {
             it.toSearchResult()
         }.ifEmpty {
             resp.select("a.show-card").mapNotNull { it.toShowCardResult() }
-        }
+        }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse? {
