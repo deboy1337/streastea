@@ -2,18 +2,18 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 23,
+    "version": 24,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": ["deboy1337"],
-    "description": "Serienstream.to Provider (v23) Covers sync + Logging",
-    "fileSize": 37590,
+    "description": "Serienstream.to Provider (v24) TMDB-Fallback + Flag-Sync",
+    "fileSize": 43041,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
     "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-5ebe8a55c183d1fe7832306dee2cdf396b8d6430e2411863fcf3ca239f12dd5b",
-    "hash": "5ebe8a55c183d1fe7832306dee2cdf396b8d6430e2411863fcf3ca239f12dd5b"
+    "fileHash": "sha256-9f34994d58fb520f67ac7ac2b2c8bea0fe138a7c98b7fade2cc28657fe561459",
+    "hash": "9f34994d58fb520f67ac7ac2b2c8bea0fe138a7c98b7fade2cc28657fe561459"
   }
 ]
