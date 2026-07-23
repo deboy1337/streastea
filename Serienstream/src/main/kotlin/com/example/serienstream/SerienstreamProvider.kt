@@ -347,6 +347,14 @@ open class SerienstreamProvider : MainAPI() {
 
         val gate = document.selectFirst("[data-redirect-gate-tier]")
         if (gate != null) {
+            val cached = getCachedHosters()
+            if (cached.isNotEmpty()) {
+                Log.w(TAG, "⚠️ Gate erkannt, aber verwende ${cached.size} gecachte Hoster")
+                setCachedHosters(emptyList())
+                setKey(SETTING_CAPTCHA_URL, "")
+                processHosters(cached, data, subtitleCallback, callback)
+                return true
+            }
             val tier = gate.attr("data-redirect-gate-tier")
             Log.w(TAG, "⚠️ Captcha/Gate erkannt: $tier")
             setKey(SETTING_CAPTCHA_URL, data)
@@ -361,14 +369,26 @@ open class SerienstreamProvider : MainAPI() {
             }
         }
 
-        buttons.amap { button ->
-            val playUrl = button.attr("data-play-url").trim()
-            val source = button.attr("data-provider-name")
-            val language = button.attr("data-language-label").trim()
+        val hosterList = buttons.map { button ->
+            listOf(
+                button.attr("data-play-url").trim(),
+                button.attr("data-provider-name"),
+                button.attr("data-language-label").trim()
+            )
+        }
+        processHosters(hosterList, data, subtitleCallback, callback)
+        return true
+    }
+
+    private suspend fun processHosters(
+        hosters: List<List<String>>,
+        data: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ) {
+        hosters.amap { (playUrl, source, language) ->
             if (playUrl.isEmpty()) return@amap
-
             Log.d(TAG, "Hoster: $source [$language] -> $playUrl")
-
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl, headers = authHeaders())
@@ -377,7 +397,6 @@ open class SerienstreamProvider : MainAPI() {
                 Log.e(TAG, "Failed: $streamUrl: ${e.message}")
                 streamUrl
             }
-
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
                 val linkWithLang = runBlocking {
                     newExtractorLink(
@@ -395,7 +414,6 @@ open class SerienstreamProvider : MainAPI() {
                 callback.invoke(linkWithLang)
             }
         }
-        return true
     }
 
     private fun Element.toShowCardResult(): SearchResponse? {
@@ -454,6 +472,15 @@ open class SerienstreamProvider : MainAPI() {
 
         @JvmStatic
         fun updateSessionCookies(cookies: String) { sharedSessionCookies = cookies }
+
+        @JvmStatic
+        private var cachedHosters = mutableListOf<List<String>>()
+
+        @JvmStatic
+        fun getCachedHosters(): List<List<String>> = cachedHosters
+
+        @JvmStatic
+        fun setCachedHosters(hosters: List<List<String>>) { cachedHosters = hosters.toMutableList() }
         private val GENRE_NAMES = mapOf(
             "filter.genre_doku-soap" to "Dokusoap",
             "filter.genre_historie" to "History",

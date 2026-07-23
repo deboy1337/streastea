@@ -2,6 +2,7 @@ package com.example.serienstream
 
 import android.content.Context
 import android.graphics.Color
+import android.util.Log
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -106,21 +107,48 @@ class SerienstreamPlugin : Plugin() {
                     val dialog = AlertDialog.Builder(ctx)
                         .setTitle("Captcha lösen (Turnstile)")
                         .setView(webView)
-                        .setPositiveButton("Erledigt") { _, _ ->
-                            val updated = cookieManager.getCookie("https://serienstream.to")
-                            if (updated != null) {
-                                SerienstreamProvider.updateSessionCookies(updated)
-                            }
-                            SerienstreamProvider.clearCaptchaUrl()
-                            webViewDestroyed = true
-                            webView.destroy()
-                            Toast.makeText(ctx, "Captcha gelöst – jetzt nochmal laden", Toast.LENGTH_LONG).show()
-                        }
+                        .setPositiveButton("Erledigt", null)
                         .setNegativeButton("Abbrechen") { _, _ ->
                             webViewDestroyed = true
                             webView.destroy()
                         }
                         .create()
+
+                    dialog.setOnShowListener {
+                        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                            val js = """
+                                JSON.stringify(Array.from(document.querySelectorAll('button.link-box[data-play-url]')).map(b => [
+                                    b.getAttribute('data-play-url'),
+                                    b.getAttribute('data-provider-name'),
+                                    b.getAttribute('data-language-label')
+                                ]))
+                            """.trimIndent()
+                            webView.evaluateJavascript(js) { json ->
+                                if (json != null && json != "null" && json != "[]" && json != "\"[]\"") {
+                                    try {
+                                        val arr = org.json.JSONArray(if (json.startsWith("\"")) org.json.JSONArray(json.substring(1, json.length - 1)) else json)
+                                        val hosters = mutableListOf<List<String>>()
+                                        for (i in 0 until arr.length()) {
+                                            val item = arr.getJSONArray(i)
+                                            hosters.add(listOf(item.getString(0), item.getString(1), item.getString(2)))
+                                        }
+                                        SerienstreamProvider.setCachedHosters(hosters)
+                                        Log.i("Serienstream", "Scraped ${hosters.size} hosters from WebView")
+                                    } catch (_: Exception) {}
+                                }
+                                val updated = cookieManager.getCookie("https://serienstream.to")
+                                if (updated != null) {
+                                    SerienstreamProvider.updateSessionCookies(updated)
+                                }
+                                SerienstreamProvider.clearCaptchaUrl()
+                                dialog.dismiss()
+                                webViewDestroyed = true
+                                webView.destroy()
+                                val count = SerienstreamProvider.getCachedHosters().size
+                                Toast.makeText(ctx, "$count Hoster gefunden – jetzt nochmal laden", Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
 
                     dialog.setOnDismissListener {
                         val updated = cookieManager.getCookie("https://serienstream.to")
