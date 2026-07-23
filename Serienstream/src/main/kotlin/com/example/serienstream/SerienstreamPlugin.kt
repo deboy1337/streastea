@@ -1,6 +1,8 @@
 package com.example.serienstream
 
 import android.content.Context
+import android.graphics.Color
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -37,12 +39,10 @@ class SerienstreamPlugin : Plugin() {
                 setPadding(48, 32, 48, 8)
             }
 
-            val clearBtn = TextView(ctx).apply {
+            val clearBtn = Button(ctx).apply {
                 text = "Covers leeren"
-                setPadding(48, 8, 48, 8)
-                setTextColor(0xFFE53935.toInt())
-                textSize = 14f
-                gravity = android.view.Gravity.CENTER
+                setTextColor(Color.parseColor("#E53935"))
+                setPadding(16, 8, 16, 8)
                 setOnClickListener {
                     SerienstreamProvider.clearCovers()
                     Toast.makeText(ctx, "Covers gelöscht!", Toast.LENGTH_LONG).show()
