@@ -409,6 +409,14 @@ open class SerienstreamProvider : MainAPI() {
         }
     }
 
+    suspend fun testTmdbKey(key: String): Boolean {
+        return try {
+            val resp = app.get("https://api.themoviedb.org/3/configuration?api_key=$key")
+            val json = org.json.JSONObject(resp.text)
+            json.has("images") && !json.has("status_code")
+        } catch (_: Exception) { false }
+    }
+
     suspend fun syncGenrePosters() {
         ensureLoggedIn()
         val tmdbKey = getKey<String>(SETTING_TMDB_KEY) ?: ""

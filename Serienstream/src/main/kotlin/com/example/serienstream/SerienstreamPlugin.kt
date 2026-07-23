@@ -10,7 +10,10 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.extractors.Voe1
 import android.app.AlertDialog
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
+import kotlinx.coroutines.runBlocking
 
 @CloudstreamPlugin
 class SerienstreamPlugin : Plugin() {
@@ -64,8 +67,27 @@ class SerienstreamPlugin : Plugin() {
                     setKey(SerienstreamProvider.SETTING_PASSWORD, "")
                 }
                 .setNeutralButton("Covers sync") { _, _ ->
-                    setKey(SerienstreamProvider.SETTING_SYNC_REQUESTED, "true")
-                    Toast.makeText(ctx, "Sync beim nächsten Startseiten-Laden", Toast.LENGTH_LONG).show()
+                    val key = tmdbInput.text.toString().trim()
+                    if (key.isBlank()) {
+                        Toast.makeText(ctx, "Bitte TMDB API-Key eingeben", Toast.LENGTH_LONG).show()
+                        return@setNeutralButton
+                    }
+                    setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
+                    setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
+                    setKey(SerienstreamProvider.SETTING_TMDB_KEY, key)
+                    Thread {
+                        runBlocking {
+                            val ok = SerienstreamProvider().testTmdbKey(key)
+                            Handler(Looper.getMainLooper()).post {
+                                if (ok) {
+                                    setKey(SerienstreamProvider.SETTING_SYNC_REQUESTED, "true")
+                                    Toast.makeText(ctx, "TMDB-Key gültig! Sync startet beim nächsten Laden", Toast.LENGTH_LONG).show()
+                                } else {
+                                    Toast.makeText(ctx, "TMDB-Key ungültig!", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }.start()
                 }
                 .show()
         }
