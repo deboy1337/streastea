@@ -1,0 +1,23 @@
+[
+  {
+    "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
+    "status": 1,
+    "version": 13,
+    "name": "Serienstream",
+    "internalName": "Serienstream",
+    "authors": [
+      "deboy1337"
+    ],
+    "description": "Serienstream.to Provider (v13) Fix load() selectors, fetch all 28 genres",
+    "fileSize": 29794,
+    "repositoryUrl": "https://github.com/deboy1337/streastea",
+    "language": "de",
+    "tvTypes": [
+      "TvSeries"
+    ],
+    "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
+    "apiVersion": 1,
+    "fileHash": "sha256-416e9439c19fc803325e069de644d6a9fa32533b3e3b97ad54a1b03d71088497",
+    "hash": "416e9439c19fc803325e069de644d6a9fa32533b3e3b97ad54a1b03d71088497"
+  }
+]
