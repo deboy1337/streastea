@@ -202,33 +202,21 @@ open class SerienstreamProvider : MainAPI() {
         val sections = mutableListOf<HomePageList>()
 
         try {
-            val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
+            // Get genre list from /suche?tab=genres
+            val genresDoc = app.get("$mainUrl/suche", params = mapOf("tab" to "genres"), headers = authHeaders()).document
+            val genreLinks = genresDoc.select("a[href*='/genre/']").distinctBy { it.attr("href") }
 
-            // Get sections from beliebte-serien page (e.g. "Neue Staffeln diese Woche", etc.)
-            document.select(".popular-page > div").forEach { elem ->
-                val header = elem.selectFirst("div > h2")?.text()?.trim() ?: return@forEach
-                val items = elem.select("a.show-card").mapNotNull { it.toShowCardResult() }
-                if (items.isNotEmpty()) {
-                    sections.add(HomePageList(header, items))
-                }
-            }
-
-            // Add genre sections by fetching a few genre pages
-            val genreLinks = document.select("a[href*='/genre/']")
-            val genreNames = mutableListOf<String>()
-            genreLinks.take(6).forEach { el ->
+            // Fetch each genre page and add as a section
+            genreLinks.forEach { el ->
                 val href = fixUrlNull(el.attr("href")) ?: return@forEach
-                val genreName = el.select(".h5, .fw-bold").lastOrNull()?.text()?.trim()
-                    ?: el.text().trim()
-                if (genreName.isEmpty() || genreNames.contains(genreName)) return@forEach
-                if (genreName == "Sammlungen") return@forEach
-                genreNames.add(genreName)
+                val genreName = el.text().trim()
+                if (genreName.isEmpty()) return@forEach
 
                 try {
                     val genreDoc = app.get(href, headers = authHeaders()).document
-                    val genreItems = genreDoc.select("a.show-card").mapNotNull { it.toShowCardResult() }
-                    if (genreItems.isNotEmpty()) {
-                        sections.add(HomePageList(genreName, genreItems))
+                    val items = genreDoc.select(".results-group .card").mapNotNull { it.toSearchResult() }
+                    if (items.isNotEmpty()) {
+                        sections.add(HomePageList(genreName, items))
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to load genre $genreName: ${e.message}")
@@ -258,40 +246,42 @@ open class SerienstreamProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         ensureLoggedIn()
         val document = app.get(url, headers = authHeaders()).document
-        val metaContainer = document.selectFirst(".show-header-wrapper .container-fluid > div")
-            ?: throw RuntimeException("Metadata container not found")
 
-        val title = metaContainer.selectFirst("h1")?.text()
+        val title = document.selectFirst("h1")?.text()
             ?: throw RuntimeException("Failed to find series title")
-        val poster = fixUrlNull(metaContainer.selectFirst("img")?.attr("data-src"))
-        val year = metaContainer.selectFirst("h1 + p > a")?.text()?.toIntOrNull()
-        val description = metaContainer.select(".description-text").text()
-        val actors = metaContainer.select("li.series-group:contains(Besetzung:) a").map { it.text() }
-        val genres = metaContainer.select("li.series-group:contains(Genre:) a").map { it.text() }
-        val trailerUrl = metaContainer.selectFirst("button[data-trailer-url]")?.attr("data-trailer-url")
 
-        val episodes = document.select("#season-nav ul > li a").amap {
+        val poster = document.select("img[alt='${title.replace("'", "\\'")}']")
+            .firstOrNull()?.let { fixUrlNull(it.attr("data-src")) }
+
+        val description = document.selectFirst(".description-text")?.text() ?: ""
+
+        val genres = document.select("a[href*='/genre/']").map { it.text().trim() }
+
+        val actors = document.select("a[href*='/person/']").map { it.text().trim() }
+
+        val trailerUrl = document.selectFirst("button[data-trailer-url]")
+            ?.attr("data-trailer-url")
+
+        val episodes = document.select("#season-nav a.alphabet-link").amap {
             val seasonNumber = it.text().trim().toIntOrNull()
             val seasonDocument = app.get(fixUrl(it.attr("href")), headers = authHeaders()).document
 
-            seasonDocument.select(".episode-section .episode-row").map { eps ->
+            seasonDocument.select("tr.episode-row").map { eps ->
                 val episodeLink = eps.attr("onclick")
-                    .substringAfter("=")
-                    .trim('\'')
+                    ?.substringAfter("window.location='")
+                    ?.substringBefore("'") ?: return@map null
 
                 newEpisode(episodeLink) {
                     this.episode = eps.selectFirst(".episode-number-cell")?.text()?.toIntOrNull()
-                    this.name = eps.select(".episode-title-cell > *")
-                        .joinToString(" - ") { el -> el.text() }
+                    this.name = eps.selectFirst(".episode-title-ger")?.text()
                     this.season = seasonNumber
                 }
-            }
+            }.filterNotNull()
         }.flatten()
 
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
             this.name = title
             this.posterUrl = poster
-            this.year = year
             this.plot = description
             this.tags = genres
             addTrailer(trailerUrl)
