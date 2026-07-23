@@ -1,7 +1,10 @@
 package com.example.serienstream
 
 import android.util.Log
+import android.widget.Toast
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
+import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
@@ -22,6 +25,8 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jsoup.nodes.Element
 
 open class SerienstreamProvider : MainAPI() {
@@ -34,6 +39,15 @@ open class SerienstreamProvider : MainAPI() {
     private var isLoggedIn = false
     private var triedLogin = false
 
+    private fun toast(msg: String) {
+        try {
+            val ctx = CommonActivity.activity ?: return
+            ctx.runOnUiThread {
+                Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
+            }
+        } catch (_: Exception) {}
+    }
+
     private suspend fun ensureLoggedIn() {
         if (isLoggedIn || triedLogin) return
         triedLogin = true
@@ -42,20 +56,23 @@ open class SerienstreamProvider : MainAPI() {
         val password = getKey<String>(SETTING_PASSWORD)
         if (email.isNullOrBlank() || password.isNullOrBlank()) {
             Log.w(TAG, "No login credentials stored")
+            toast("Serienstream: Keine Zugangsdaten gespeichert")
             return
         }
 
         try {
-            val loginPage = app.get("$mainUrl/login")
-            val doc = loginPage.document
+            val loginPageResp = app.get("$mainUrl/login")
+            val doc = loginPageResp.document
             val csrfToken = doc.selectFirst("input[name='_token']")?.attr("value")
 
             if (csrfToken == null) {
                 Log.e(TAG, "CSRF token not found on login page")
+                toast("Serienstream: CSRF Token nicht gefunden")
                 return
             }
 
             Log.d(TAG, "Attempting login with email: $email")
+            toast("Serienstream: Login wird versucht...")
 
             val loginResp = app.post(
                 "$mainUrl/login",
@@ -71,23 +88,58 @@ open class SerienstreamProvider : MainAPI() {
                 )
             )
 
+            val respUrl = loginResp.url.toString()
             val respDoc = loginResp.document
             val hasError = respDoc.select(".alert-danger, .invalid-feedback, .error").isNotEmpty()
-            val stillOnLogin = loginResp.url.contains("/login")
-            val hasLogout = respDoc.select("a[href*='logout'], a[href*='profil'], .user-menu, .dropdown-menu").isNotEmpty()
+            val stillOnLogin = respUrl.contains("/login")
+
+            Log.d(TAG, "Login response URL: $respUrl, stillOnLogin: $stillOnLogin, hasError: $hasError")
 
             if (stillOnLogin || hasError) {
-                Log.e(TAG, "Login failed - still on login page: $stillOnLogin, has error: $hasError")
                 val errorText = respDoc.select(".alert-danger, .invalid-feedback").text()
-                if (errorText.isNotEmpty()) {
-                    Log.e(TAG, "Login error message: $errorText")
-                }
-            } else {
+                Log.e(TAG, "Login failed. Error: $errorText")
+                toast("Serienstream: Login fehlgeschlagen: ${errorText.ifEmpty { "Unbekannter Fehler" }}")
+                return
+            }
+
+            // Verify by checking /account page for username
+            Log.d(TAG, "Login POST succeeded, verifying via /account...")
+            val accountResp = app.get("$mainUrl/account")
+            val accountDoc = accountResp.document
+            val accountUrl = accountResp.url.toString()
+            val accountHtml = accountDoc.html()
+
+            // Check if we got redirected back to login
+            if (accountUrl.contains("/login")) {
+                Log.e(TAG, "Account check redirected to login - session not maintained")
+                toast("Serienstream: Session nicht gueltig (weitergeleitet zu Login)")
+                return
+            }
+
+            // Check for username indicators in the account page
+            val hasWelcome = accountHtml.contains("Willkommen")
+            val hasLogout = accountDoc.select("a[href*='logout']").isNotEmpty()
+            val hasProfileLink = accountDoc.select("a[href*='profil'], a[href*='account']").isNotEmpty()
+            val bodyText = accountDoc.body()?.text() ?: ""
+
+            Log.d(TAG, "Account page - hasWelcome: $hasWelcome, hasLogout: $hasLogout, hasProfileLink: $hasProfileLink")
+            Log.d(TAG, "Account page title: ${accountDoc.title()}")
+            Log.d(TAG, "Account body text (first 500 chars): ${bodyText.take(500)}")
+
+            if (hasLogout || hasWelcome) {
                 isLoggedIn = true
-                Log.d(TAG, "Login successful! Final URL: ${loginResp.url}")
+                val msg = "Serienstream: Login erfolgreich! Willkommen!"
+                Log.d(TAG, msg)
+                toast(msg)
+            } else {
+                Log.w(TAG, "Login verification unclear - account page doesn't show welcome/logout")
+                toast("Serienstream: Login unklar - Account-Seite pruefen")
+                // Still try to proceed - maybe login worked but account page is different
+                isLoggedIn = true
             }
         } catch (e: Exception) {
             Log.e(TAG, "Login exception: ${e.message}", e)
+            toast("Serienstream: Login Fehler: ${e.message}")
         }
     }
 
@@ -163,14 +215,29 @@ open class SerienstreamProvider : MainAPI() {
     ): Boolean {
         ensureLoggedIn()
 
+        toast("Serienstream: Lade Streams fuer $data")
+
         val document = app.get(data).document
+        val pageHtml = document.html()
+        val title = document.selectFirst("h1")?.text() ?: "unbekannt"
+
+        Log.d(TAG, "Episode page title: $title")
+        Log.d(TAG, "Episode page URL: $data")
+        Log.d(TAG, "Has gate div: ${pageHtml.contains("episode-redirect-gate")}")
+        Log.d(TAG, "Has play buttons: ${pageHtml.contains("data-play-url")}")
+
         val buttons = document.select("button.link-box[data-play-url]")
         if (buttons.isEmpty()) {
-            Log.w(TAG, "No hoster buttons found on $data")
+            val allButtons = document.select("button")
+            val allLinks = document.select("a[href*='stream'], a[href*='embed']")
+            Log.w(TAG, "No hoster buttons found. All buttons: ${allButtons.size}, stream links: ${allLinks.size}")
+            Log.d(TAG, "Page body (first 2000 chars): ${document.body()?.html()?.take(2000)}")
+            toast("Serienstream: Keine Hoster gefunden auf '$title'")
             return false
         }
 
         Log.d(TAG, "Found ${buttons.size} hoster buttons, logged in: $isLoggedIn")
+        toast("Serienstream: ${buttons.size} Hoster gefunden fuer '$title'")
 
         buttons.amap { button ->
             val playUrl = button.attr("data-play-url").trim()
@@ -179,19 +246,25 @@ open class SerienstreamProvider : MainAPI() {
             if (playUrl.isEmpty()) return@amap
 
             Log.d(TAG, "Trying hoster: $source [$language] -> $playUrl")
+            toast("Serienstream: Teste $source ($language)...")
 
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl)
-                Log.d(TAG, "Hoster redirect: $streamUrl -> ${resp.url}")
+                val respBody = resp.document.html()
+                Log.d(TAG, "Hoster response URL: ${resp.url}")
+                Log.d(TAG, "Hoster response has iframe: ${respBody.contains("<iframe")}")
+                Log.d(TAG, "Hoster response (first 1000): ${respBody.take(1000)}")
                 resp.url
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to resolve hoster URL $streamUrl: ${e.message}")
+                toast("Serienstream: Fehler bei $source: ${e.message}")
                 streamUrl
             }
 
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
-                Log.d(TAG, "Loaded stream from ${link.name}: ${link.url}")
+                Log.d(TAG, "Loaded stream from ${link.name}: quality=${link.quality}")
+                toast("Serienstream: Stream gefunden: ${link.name} (${link.quality})")
                 callback.invoke(link)
             }
         }
