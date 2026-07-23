@@ -348,11 +348,16 @@ open class SerienstreamProvider : MainAPI() {
             return false
         }
 
-        buttons.amap { button ->
+        val sortedButtons = buttons.sortedByDescending {
+            val lang = it.attr("data-language-label").trim()
+            lang.equals("Deutsch", ignoreCase = true)
+        }
+
+        sortedButtons.forEach { button ->
             val playUrl = button.attr("data-play-url").trim()
             val source = button.attr("data-provider-name")
             val language = button.attr("data-language-label").trim()
-            if (playUrl.isEmpty()) return@amap
+            if (playUrl.isEmpty()) return@forEach
 
             Log.d(TAG, "Hoster: $source [$language] -> $playUrl")
 
