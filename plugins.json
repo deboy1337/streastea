@@ -2,18 +2,18 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 21,
+    "version": 22,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": ["deboy1337"],
-    "description": "Serienstream.to Provider (v21) Coverbilder + alle Serien per by=genre",
-    "fileSize": 33023,
+    "description": "Serienstream.to Provider (v22) Covers sync Button + Poster-Cache",
+    "fileSize": 37084,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
     "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-6bed0c716f5b1514e77af16c10383895f084f325a0975f3e8879742444f927ee",
-    "hash": "6bed0c716f5b1514e77af16c10383895f084f325a0975f3e8879742444f927ee"
+    "fileHash": "sha256-17e94d45bede7dd5182c166a970be87b0a9905bb691f84054216d7157a9d077c",
+    "hash": "17e94d45bede7dd5182c166a970be87b0a9905bb691f84054216d7157a9d077c"
   }
 ]
