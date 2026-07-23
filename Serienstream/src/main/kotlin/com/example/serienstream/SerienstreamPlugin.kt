@@ -10,20 +10,6 @@ import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
-import com.lagradost.cloudstream3.extractors.DoodCxExtractor
-import com.lagradost.cloudstream3.extractors.DoodLaExtractor
-import com.lagradost.cloudstream3.extractors.DoodLiExtractor
-import com.lagradost.cloudstream3.extractors.DoodPmExtractor
-import com.lagradost.cloudstream3.extractors.DoodShExtractor
-import com.lagradost.cloudstream3.extractors.DoodSoExtractor
-import com.lagradost.cloudstream3.extractors.DoodToExtractor
-import com.lagradost.cloudstream3.extractors.DoodWatchExtractor
-import com.lagradost.cloudstream3.extractors.DoodWfExtractor
-import com.lagradost.cloudstream3.extractors.DoodWsExtractor
-import com.lagradost.cloudstream3.extractors.DoodYtExtractor
-import com.lagradost.cloudstream3.extractors.DoodstreamCom
-import com.lagradost.cloudstream3.extractors.Doodspro
-import com.lagradost.cloudstream3.extractors.StreamTape
 import com.lagradost.cloudstream3.extractors.Voe1
 import android.app.AlertDialog
 import android.widget.Toast
@@ -33,20 +19,6 @@ class SerienstreamPlugin : Plugin() {
     override fun load(context: Context) {
         registerMainAPI(SerienstreamProvider())
         registerExtractorAPI(Voe1())
-        registerExtractorAPI(DoodstreamCom())
-        registerExtractorAPI(Doodspro())
-        registerExtractorAPI(DoodCxExtractor())
-        registerExtractorAPI(DoodLaExtractor())
-        registerExtractorAPI(DoodLiExtractor())
-        registerExtractorAPI(DoodPmExtractor())
-        registerExtractorAPI(DoodShExtractor())
-        registerExtractorAPI(DoodSoExtractor())
-        registerExtractorAPI(DoodToExtractor())
-        registerExtractorAPI(DoodWatchExtractor())
-        registerExtractorAPI(DoodWfExtractor())
-        registerExtractorAPI(DoodWsExtractor())
-        registerExtractorAPI(DoodYtExtractor())
-        registerExtractorAPI(StreamTape())
 
         openSettings = { ctx ->
             val emailInput = EditText(ctx).apply {
