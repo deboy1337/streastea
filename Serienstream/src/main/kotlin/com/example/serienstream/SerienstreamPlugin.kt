@@ -37,12 +37,25 @@ class SerienstreamPlugin : Plugin() {
                 setPadding(48, 32, 48, 8)
             }
 
+            val clearBtn = TextView(ctx).apply {
+                text = "Covers leeren"
+                setPadding(48, 8, 48, 8)
+                setTextColor(0xFFE53935.toInt())
+                textSize = 14f
+                gravity = android.view.Gravity.CENTER
+                setOnClickListener {
+                    SerienstreamProvider.clearCovers()
+                    Toast.makeText(ctx, "Covers gelöscht!", Toast.LENGTH_LONG).show()
+                }
+            }
+
             val layout = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(48, 16, 48, 16)
                 addView(label)
                 addView(emailInput)
                 addView(passwordInput)
+                addView(clearBtn)
             }
 
             AlertDialog.Builder(ctx)

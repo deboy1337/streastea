@@ -437,6 +437,48 @@ open class SerienstreamProvider : MainAPI() {
             "filter.genre_krankenhausserie" to "Krankenhaus"
         )
 
+        fun clearCovers() {
+            setKey(SETTING_POSTER_MAP, "")
+            Log.i(TAG, "Covers gelöscht")
+        }
+
+        private fun doLogin(client: OkHttpClient, email: String, password: String): Map<String, String> {
+            val loginPageReq = Request.Builder()
+                .url("$BASE_URL/login")
+                .header("User-Agent", DESKTOP_UA)
+                .get()
+                .build()
+            val loginPageResp = client.newCall(loginPageReq).execute()
+            val loginHtml = loginPageResp.body?.string() ?: ""
+            val csrf = Regex("""name="_token"\s+value="([^"]+)""").find(loginHtml)?.groupValues?.get(1)
+            if (csrf == null) return emptyMap()
+
+            val formBody = FormBody.Builder()
+                .add("_token", csrf)
+                .add("email", email)
+                .add("password", password)
+                .build()
+            val loginPostReq = Request.Builder()
+                .url("$BASE_URL/login")
+                .header("User-Agent", DESKTOP_UA)
+                .header("Referer", "$BASE_URL/login")
+                .header("Origin", BASE_URL)
+                .post(formBody)
+                .build()
+            val loginResp = client.newCall(loginPostReq).execute()
+            if (loginResp.code == 302) {
+                val loc = loginResp.header("Location") ?: ""
+                val fullLoc = if (loc.startsWith("http")) loc else "$BASE_URL$loc"
+                client.newCall(Request.Builder()
+                    .url(fullLoc)
+                    .header("User-Agent", DESKTOP_UA)
+                    .get().build()).execute()
+            }
+
+            return client.cookieJar.loadForRequest("$BASE_URL/".toHttpUrl())
+                .associate { it.name to it.value }
+        }
+
         fun syncGenrePosters() {
             val email = getKey<String>(SETTING_EMAIL) ?: ""
             val password = getKey<String>(SETTING_PASSWORD) ?: ""
@@ -457,44 +499,12 @@ open class SerienstreamProvider : MainAPI() {
                     })
                     .build()
 
-                val loginPageReq = Request.Builder()
-                    .url("$BASE_URL/login")
-                    .header("User-Agent", DESKTOP_UA)
-                    .get()
-                    .build()
-                val loginPageResp = client.newCall(loginPageReq).execute()
-                val loginHtml = loginPageResp.body?.string() ?: ""
-                val csrf = Regex("""name="_token"\s+value="([^"]+)""").find(loginHtml)?.groupValues?.get(1)
-                if (csrf == null) { Log.w(TAG, "Sync: CSRF nicht gefunden"); return }
-
-                val formBody = FormBody.Builder()
-                    .add("_token", csrf)
-                    .add("email", email)
-                    .add("password", password)
-                    .build()
-                val loginPostReq = Request.Builder()
-                    .url("$BASE_URL/login")
-                    .header("User-Agent", DESKTOP_UA)
-                    .header("Referer", "$BASE_URL/login")
-                    .header("Origin", BASE_URL)
-                    .post(formBody)
-                    .build()
-                val loginResp = client.newCall(loginPostReq).execute()
-                if (loginResp.code == 302) {
-                    val loc = loginResp.header("Location") ?: ""
-                    val fullLoc = if (loc.startsWith("http")) loc else "$BASE_URL$loc"
-                    client.newCall(Request.Builder()
-                        .url(fullLoc)
-                        .header("User-Agent", DESKTOP_UA)
-                        .get().build()).execute()
-                }
-
-                val cookies = client.cookieJar.loadForRequest("$BASE_URL/".toHttpUrl())
-                    .associate { it.name to it.value }
+                var currentCookies = doLogin(client, email, password)
+                if (currentCookies.isEmpty()) { Log.w(TAG, "Sync: Login fehlgeschlagen"); return }
 
                 val genreDoc = org.jsoup.Jsoup.connect("$BASE_URL/serien?by=genre")
                     .userAgent(DESKTOP_UA)
-                    .cookies(cookies)
+                    .cookies(currentCookies)
                     .get()
 
                 val genreSlugs = genreDoc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { div ->
@@ -509,42 +519,58 @@ open class SerienstreamProvider : MainAPI() {
                 val posterMap = mutableMapOf<String, String>()
                 val seenHrefs = mutableSetOf<String>()
 
-                genreSlugs.forEach { slug ->
-                    var page = 1
-                    while (true) {
-                        val pageUrl = if (page == 1) "$BASE_URL/genre/$slug"
-                            else "$BASE_URL/genre/$slug?page=$page"
+                genreSlugs.forEachIndexed { idx, slug ->
+                    try {
+                        var page = 1
+                        while (true) {
+                            val pageUrl = if (page == 1) "$BASE_URL/genre/$slug"
+                                else "$BASE_URL/genre/$slug?page=$page"
 
-                        try {
-                            val doc = org.jsoup.Jsoup.connect(pageUrl)
-                                .userAgent(DESKTOP_UA)
-                                .cookies(cookies)
-                                .get()
+                            try {
+                                val doc = org.jsoup.Jsoup.connect(pageUrl)
+                                    .userAgent(DESKTOP_UA)
+                                    .cookies(currentCookies)
+                                    .get()
 
-                            val cards = doc.select("a.show-card")
-                            if (cards.isEmpty()) break
-
-                            cards.forEach { card ->
-                                val href = card.attr("href")
-                                val fullHref = if (href.startsWith("http")) href else "$BASE_URL$href"
-                                if (!seenHrefs.add(fullHref)) return@forEach
-
-                                val img = card.selectFirst("img") ?: return@forEach
-                                val poster = img.attr("data-src").ifEmpty { img.attr("src") }
-                                if (poster.isNotBlank()) {
-                                    val fullPoster = if (poster.startsWith("http")) poster else "$BASE_URL$poster"
-                                    posterMap[fullHref] = fullPoster
+                                val cards = doc.select("a.show-card")
+                                if (cards.isEmpty()) {
+                                    if (doc.title().contains("Anmelden", ignoreCase = true)) {
+                                        currentCookies = doLogin(client, email, password)
+                                        if (currentCookies.isNotEmpty()) continue
+                                    }
+                                    break
                                 }
-                            }
 
-                            val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
-                            if (!hasNext) break
-                            page++
-                            Thread.sleep(200)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Fehler $pageUrl: ${e.message}")
-                            break
+                                cards.forEach { card ->
+                                    val href = card.attr("href")
+                                    val fullHref = if (href.startsWith("http")) href else "$BASE_URL$href"
+                                    if (fullHref in seenHrefs) return@forEach
+
+                                    val img = card.selectFirst("img") ?: return@forEach
+                                    val poster = img.attr("data-src").ifEmpty { img.attr("src") }
+                                    if (poster.isNotBlank()) {
+                                        val fullPoster = if (poster.startsWith("http")) poster else "$BASE_URL$poster"
+                                        posterMap[fullHref] = fullPoster
+                                        seenHrefs.add(fullHref)
+                                    }
+                                }
+
+                                val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
+                                if (!hasNext) break
+                                page++
+                                Thread.sleep(200)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Fehler $pageUrl: ${e.message}")
+                                if (page == 1) break
+                                page++
+                                Thread.sleep(500)
+                            }
                         }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Genre '$slug' fehlgeschlagen: ${e.message}")
+                    }
+                    if ((idx + 1) % 5 == 0) {
+                        Log.i(TAG, "Sync: ${idx + 1}/${genreSlugs.size} Genres, ${posterMap.size} Poster")
                     }
                 }
 
