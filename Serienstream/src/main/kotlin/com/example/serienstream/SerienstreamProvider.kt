@@ -343,6 +343,14 @@ open class SerienstreamProvider : MainAPI() {
 
         val document = app.get(data, headers = authHeaders()).document
 
+        val gate = document.selectFirst("[data-redirect-gate-tier]")
+        if (gate != null) {
+            val tier = gate.attr("data-redirect-gate-tier")
+            Log.w(TAG, "⚠️ Captcha/Gate erkannt: $tier")
+            setKey(SETTING_CAPTCHA_URL, data)
+            return false
+        }
+
         val buttons = document.select("button.link-box[data-play-url]").sortedBy { button ->
             when (button.attr("data-language-label").trim()) {
                 "Deutsch" -> 0
@@ -362,13 +370,7 @@ open class SerienstreamProvider : MainAPI() {
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl, headers = authHeaders())
-                val url = resp.url
-                val doc = resp.document
-                if (doc != null && doc.selectFirst("[data-altcha-challenge-url]") != null) {
-                    setKey(SETTING_CAPTCHA_URL, url)
-                    Log.w(TAG, "⚠️ Captcha erkannt: $url")
-                }
-                url
+                resp.url
             } catch (e: Exception) {
                 Log.e(TAG, "Failed: $streamUrl: ${e.message}")
                 streamUrl
