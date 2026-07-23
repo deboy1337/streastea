@@ -362,7 +362,13 @@ open class SerienstreamProvider : MainAPI() {
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl, headers = authHeaders())
-                resp.url
+                val url = resp.url
+                val doc = resp.document
+                if (doc != null && doc.selectFirst("[data-altcha-challenge-url]") != null) {
+                    setKey(SETTING_CAPTCHA_URL, url)
+                    Log.w(TAG, "⚠️ Captcha erkannt: $url")
+                }
+                url
             } catch (e: Exception) {
                 Log.e(TAG, "Failed: $streamUrl: ${e.message}")
                 streamUrl
@@ -431,6 +437,7 @@ open class SerienstreamProvider : MainAPI() {
         const val SETTING_PASSWORD = "serienstream_password"
         const val SETTING_POSTER_MAP = "genre_poster_map"
         const val SETTING_SYNC_REQUESTED = "sync_requested"
+        const val SETTING_CAPTCHA_URL = "serienstream_captcha_url"
         private const val TAG = "Serienstream"
         private const val BASE_URL = "https://serienstream.to"
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -444,6 +451,9 @@ open class SerienstreamProvider : MainAPI() {
             setKey(SETTING_POSTER_MAP, "")
             Log.i(TAG, "Covers gelöscht")
         }
+
+        fun getCaptchaUrl(): String? = getKey<String>(SETTING_CAPTCHA_URL)?.takeIf { it.isNotBlank() }
+        fun clearCaptchaUrl() { setKey(SETTING_CAPTCHA_URL, "") }
 
         private fun doLogin(client: OkHttpClient, email: String, password: String): Map<String, String> {
             val loginPageReq = Request.Builder()
