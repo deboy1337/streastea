@@ -226,7 +226,6 @@ open class SerienstreamProvider : MainAPI() {
             val genreDoc = app.get("$mainUrl/suche", params = mapOf("tab" to "genres"), headers = authHeaders()).document
             val genreLinks = genreDoc.select("a[href*='/genre/']")
                 .distinctBy { it.attr("href") }
-                .take(6)
 
             genreLinks.forEach { el ->
                 val href = fixUrlNull(el.attr("href")) ?: return@forEach
