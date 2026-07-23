@@ -2,17 +2,17 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 11,
+    "version": 12,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": ["deboy1337"],
-    "description": "Serienstream.to Provider (v11) Fix Search, A-Z, Genres, Neue Episoden",
-    "fileSize": 31893,
+    "description": "Serienstream.to Provider (v12) Fix genres, search, language labels",
+    "fileSize": 30694,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
     "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-7bdc73aa4f335760cbcf8ac5a8b06c71c9ae39e3ffb957026f06d9e83d610a81"
+    "fileHash": "sha256-5a5f6682b76e877674aa481bc673c9391fc15824f0fd2fa643ecb1512c36bd05"
   }
 ]
