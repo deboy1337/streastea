@@ -12,7 +12,6 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
-
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.amap
@@ -25,6 +24,8 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
+import kotlinx.coroutines.runBlocking
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -200,78 +201,42 @@ open class SerienstreamProvider : MainAPI() {
         ensureLoggedIn()
         val sections = mutableListOf<HomePageList>()
 
-        // Section 1: Beliebte Serien
         try {
-            val doc = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
-            val items = doc.select("a.show-card").mapNotNull { it.toShowCardResult() }
-            if (items.isNotEmpty()) {
-                sections.add(HomePageList("Beliebte Serien", items))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load beliebte-serien: ${e.message}")
-        }
+            val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
 
-        // Section 2: Neue Episoden
-        try {
-            val doc = app.get("$mainUrl/neue-episoden", headers = authHeaders()).document
-            val rows = doc.select("table.new-episodes-table tbody tr")
-            val epItems = rows.mapNotNull { row ->
-                val linkEl = row.selectFirst("a[href*='/serie/']") ?: return@mapNotNull null
-                val href = fixUrlNull(linkEl.attr("href")) ?: return@mapNotNull null
-                val title = linkEl.text().trim()
-                val seasonBadge = row.select("span.badge.bg-secondary").firstOrNull()?.text()?.trim() ?: ""
-                val episodeBadge = row.select("span.badge.bg-secondary").getOrNull(1)?.text()?.trim() ?: ""
-                val langSvg = row.selectFirst("svg.watch-language")
-                val langTitle = langSvg?.attr("title") ?: ""
-                val langEmoji = if (langTitle.contains("Deutsch")) "[DE]" else if (langTitle.contains("Englisch")) "[EN]" else ""
-
-                newTvSeriesSearchResponse(
-                    "$langEmoji $title - $seasonBadge $episodeBadge".trim(),
-                    href,
-                    TvType.TvSeries
-                ) {
-                    this.posterUrl = null
+            // Get sections from beliebte-serien page (e.g. "Neue Staffeln diese Woche", etc.)
+            document.select(".popular-page > div").forEach { elem ->
+                val header = elem.selectFirst("div > h2")?.text()?.trim() ?: return@forEach
+                val items = elem.select("a.show-card").mapNotNull { it.toShowCardResult() }
+                if (items.isNotEmpty()) {
+                    sections.add(HomePageList(header, items))
                 }
             }
-            if (epItems.isNotEmpty()) {
-                sections.add(HomePageList("Neue Episoden", epItems))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load neue-episoden: ${e.message}")
-        }
 
-        // Section 3: Genres
-        try {
-            val doc = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
-            val genreLinks = doc.select("a[href*='/genre/']")
-            val genreItems = genreLinks.mapNotNull { el ->
-                val href = fixUrlNull(el.attr("href")) ?: return@mapNotNull null
+            // Add genre sections by fetching a few genre pages
+            val genreLinks = document.select("a[href*='/genre/']")
+            val genreNames = mutableListOf<String>()
+            genreLinks.take(6).forEach { el ->
+                val href = fixUrlNull(el.attr("href")) ?: return@forEach
                 val genreName = el.select(".h5, .fw-bold").lastOrNull()?.text()?.trim()
                     ?: el.text().trim()
-                if (genreName.isEmpty()) return@mapNotNull null
-                newTvSeriesSearchResponse(genreName, href, TvType.TvSeries) {
-                    this.posterUrl = null
-                }
-            }
-            if (genreItems.isNotEmpty()) {
-                sections.add(HomePageList("Genres", genreItems))
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load genres: ${e.message}")
-        }
+                if (genreName.isEmpty() || genreNames.contains(genreName)) return@forEach
+                if (genreName == "Sammlungen") return@forEach
+                genreNames.add(genreName)
 
-        // Section 4: Alphabetisch
-        try {
-            val alphabetItems = ('A'..'Z').map { letter ->
-                newTvSeriesSearchResponse(letter.toString(), "$mainUrl/katalog/$letter", TvType.TvSeries) {
-                    this.posterUrl = null
+                try {
+                    val genreDoc = app.get(href, headers = authHeaders()).document
+                    val genreItems = genreDoc.select("a.show-card").mapNotNull { it.toShowCardResult() }
+                    if (genreItems.isNotEmpty()) {
+                        sections.add(HomePageList(genreName, genreItems))
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load genre $genreName: ${e.message}")
                 }
-            } + newTvSeriesSearchResponse("0-9", "$mainUrl/katalog/0-9", TvType.TvSeries) {
-                this.posterUrl = null
             }
-            sections.add(HomePageList("A-Z", alphabetItems))
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to build alphabet: ${e.message}")
+            Log.e(TAG, "Failed to load main page: ${e.message}")
+            toast("Serienstream: Fehler beim Laden der Startseite")
         }
 
         return newHomePageResponse(sections, hasNext = false)
@@ -279,81 +244,58 @@ open class SerienstreamProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/suche", params = mapOf("term" to query), headers = authHeaders()).document
-        val items = mutableListOf<SearchResponse>()
+        val resp = app.get(
+            "$mainUrl/suche",
+            params = mapOf("term" to query, "tab" to "shows"),
+            headers = authHeaders()
+        ).document
 
-        // Search for shows in the results-group[data-group="shows"] or cover-card elements
-        document.select("a[href*='/serie/']").forEach { link ->
-            val href = fixUrlNull(link.attr("href")) ?: return@forEach
-            // Skip FAQ/episode links
-            if (href.contains("/faqs/") || href.count { it == '/' } > 3) return@forEach
-            val imgEl = link.selectFirst("img") ?: return@forEach
-            val title = imgEl.attr("alt").ifEmpty {
-                link.selectFirst(".show-title, .card-body h6")?.text() ?: return@forEach
-            }
-            val posterUrl = fixUrlNull(
-                imgEl.attr("srcset").substringAfter(" ").substringBefore(" ").ifEmpty {
-                    imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
-                }
-            )
-            // Deduplicate by href
-            if (items.any { it.url == href }) return@forEach
-            items.add(newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
-                this.posterUrl = posterUrl
-            })
+        return resp.select(".results-group .card").mapNotNull {
+            it.toSearchResult()
         }
-
-        return items
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        ensureLoggedIn()
         val document = app.get(url, headers = authHeaders()).document
-        val title = document.selectFirst("h1")?.text()
-            ?: throw Error("Titel konnte nicht gefunden werden")
-        val poster = fixUrlNull(
-            document.selectFirst("img[alt='$title']")?.let {
-                it.attr("data-src").ifEmpty { it.attr("src") }
-            }
-        )
-        val description = document.selectFirst(".description-text")?.text()
-        val genres = document.select("a[href*='/genre/']").map { it.text() }
-        val actors = document.select("a[href*='/person/']").map { it.text() }
-        val trailerUrl = document.selectFirst("button[data-trailer-url]")
-            ?.attr("data-trailer-url")
-        val seasons = document.select("#season-nav a.alphabet-link")
-        val episodes = seasons.flatMap { seasonLink ->
-            val seasonNum = seasonLink.text().trim().toIntOrNull() ?: return@flatMap emptyList()
-            val seasonUrl = fixUrl(seasonLink.attr("href"))
-            val seasonDoc = app.get(seasonUrl, headers = authHeaders()).document
-            seasonDoc.select("tr.episode-row").mapNotNull { row ->
-                val episodeNum = row.selectFirst(".episode-number-cell")
-                    ?.text()?.trim()?.toIntOrNull()
-                val epTitle = row.selectFirst(".episode-title-ger")?.text()?.trim()
-                    ?: row.selectFirst(".episode-title-cell strong")?.text()?.trim()
-                val href = run {
-                    val onclick = row.attr("onclick")
-                    val onclickUrl = onclick
-                        .substringAfter("window.location='", "")
-                        .substringBefore("'", "")
-                        .trim()
-                    if (onclickUrl.isNotEmpty()) return@run onclickUrl
-                    val linkEl = row.selectFirst("a[href*='episode-']")
-                    linkEl?.attr("href") ?: ""
-                }.trim()
-                if (href.isEmpty()) return@mapNotNull null
-                newEpisode(fixUrl(href)) {
-                    this.episode = episodeNum
-                    this.name = epTitle
-                    this.season = seasonNum
+        val metaContainer = document.selectFirst(".show-header-wrapper .container-fluid > div")
+            ?: throw RuntimeException("Metadata container not found")
+
+        val title = metaContainer.selectFirst("h1")?.text()
+            ?: throw RuntimeException("Failed to find series title")
+        val poster = fixUrlNull(metaContainer.selectFirst("img")?.attr("data-src"))
+        val year = metaContainer.selectFirst("h1 + p > a")?.text()?.toIntOrNull()
+        val description = metaContainer.select(".description-text").text()
+        val actors = metaContainer.select("li.series-group:contains(Besetzung:) a").map { it.text() }
+        val genres = metaContainer.select("li.series-group:contains(Genre:) a").map { it.text() }
+        val trailerUrl = metaContainer.selectFirst("button[data-trailer-url]")?.attr("data-trailer-url")
+
+        val episodes = document.select("#season-nav ul > li a").amap {
+            val seasonNumber = it.text().trim().toIntOrNull()
+            val seasonDocument = app.get(fixUrl(it.attr("href")), headers = authHeaders()).document
+
+            seasonDocument.select(".episode-section .episode-row").map { eps ->
+                val episodeLink = eps.attr("onclick")
+                    .substringAfter("=")
+                    .trim('\'')
+
+                newEpisode(episodeLink) {
+                    this.episode = eps.selectFirst(".episode-number-cell")?.text()?.toIntOrNull()
+                    this.name = eps.select(".episode-title-cell > *")
+                        .joinToString(" - ") { el -> el.text() }
+                    this.season = seasonNumber
                 }
             }
-        }
+        }.flatten()
+
         return newTvSeriesLoadResponse(title, url, TvType.TvSeries, episodes) {
+            this.name = title
             this.posterUrl = poster
+            this.year = year
             this.plot = description
             this.tags = genres
-            addActors(actors)
             addTrailer(trailerUrl)
+            addActors(actors)
         }
     }
 
@@ -396,20 +338,43 @@ open class SerienstreamProvider : MainAPI() {
             }
 
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
-                callback.invoke(link)
+                val linkWithLang = runBlocking {
+                    newExtractorLink(
+                        source = source,
+                        name = "$source - $language",
+                        url = link.url
+                    ) {
+                        referer = link.referer
+                        quality = link.quality
+                        type = link.type
+                        headers = link.headers
+                        extractorData = link.extractorData
+                    }
+                }
+                callback.invoke(linkWithLang)
             }
         }
         return true
     }
 
     private fun Element.toShowCardResult(): SearchResponse? {
-        val href = fixUrlNull(this.attr("href")) ?: return null
+        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
         val imgEl = this.selectFirst("img") ?: return null
         val title = imgEl.attr("alt").ifEmpty { return null }
         val posterUrl = fixUrlNull(
-            imgEl.attr("srcset").substringAfter(" ").substringBefore(" ").ifEmpty {
-                imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
-            }
+            imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
+        )
+        return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+            this.posterUrl = posterUrl
+        }
+    }
+
+    private fun Element.toSearchResult(): SearchResponse? {
+        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
+        val imgEl = this.selectFirst("img") ?: return null
+        val title = imgEl.attr("alt").ifEmpty { return null }
+        val posterUrl = fixUrlNull(
+            imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
         )
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
