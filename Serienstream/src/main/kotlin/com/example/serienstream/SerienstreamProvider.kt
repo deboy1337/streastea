@@ -201,7 +201,8 @@ open class SerienstreamProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (getKey<String>(SETTING_SYNC_REQUESTED) == "true") {
             setKey(SETTING_SYNC_REQUESTED, "false")
-            Log.i(TAG, "getMainPage: sync requested via settings flag, launching background thread")
+            setKey(SETTING_POSTER_MAP, "")
+            Log.i(TAG, "getMainPage: sync requested, cleared old cache")
             Thread { runBlocking { syncGenrePosters() } }.start()
         }
 
@@ -410,17 +411,15 @@ open class SerienstreamProvider : MainAPI() {
 
     suspend fun syncGenrePosters() {
         ensureLoggedIn()
+        val tmdbKey = getKey<String>(SETTING_TMDB_KEY) ?: ""
+        if (tmdbKey.isBlank()) {
+            Log.w(TAG, "Cover sync: kein TMDB API-Key gespeichert")
+            setKey(SETTING_SYNC_REQUESTED, "true")
+            return
+        }
+
         try {
             val doc = app.get("$mainUrl/serien?by=genre", headers = authHeaders()).document
-            val genreNames = doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { h ->
-                h.selectFirst("h3")?.text()?.trim()?.let {
-                    GENRE_NAMES[it] ?: it.replace("filter.genre_", "").replace("-", " ")
-                        .replaceFirstChar { c -> c.uppercase() }
-                }
-            }.filter { it.isNotEmpty() }
-            val slugs = genreNames.map { it.lowercase().replace(" ", "-") }
-            Log.i(TAG, "Cover sync: ${genreNames.size} genres, slugs=${slugs.take(5)}...")
-
             val allSeries = doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").flatMap { headingDiv ->
                 val ul = headingDiv.nextElementSibling()
                 if (ul == null || ul.tagName() != "ul") return@flatMap emptyList()
@@ -430,58 +429,38 @@ open class SerienstreamProvider : MainAPI() {
                     if (name.isEmpty()) null else Pair(name, href)
                 }
             }
-            Log.i(TAG, "Cover sync: ${allSeries.size} total series in by=genre")
-
-            val posterMaps = slugs.amap { slug ->
-                try {
-                    val gDoc = app.get("$mainUrl/genre/$slug", headers = authHeaders()).document
-                    gDoc.select("a.show-card").mapNotNull { card ->
-                        val seriesUrl = fixUrlNull(card.attr("href")) ?: return@mapNotNull null
-                        val img = card.selectFirst("img") ?: return@mapNotNull null
-                        fixUrlNull(img.attr("data-src").ifEmpty { img.attr("src") })?.let { posterUrl ->
-                            seriesUrl to posterUrl
-                        }
-                    }.toMap()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Cover sync: genre/$slug failed: ${e.message}")
-                    emptyMap()
-                }
+            if (allSeries.isEmpty()) {
+                Log.w(TAG, "Cover sync: keine Serien in by=genre gefunden")
+                return
             }
+            Log.i(TAG, "Cover sync: ${allSeries.size} Serien, suche via TMDB...")
+
             val fullMap = mutableMapOf<String, String>()
-            posterMaps.forEach { fullMap.putAll(it) }
-            Log.i(TAG, "Cover sync: ${fullMap.size} posters from genre pages")
-
-            val tmdbKey = getKey<String>(SETTING_TMDB_KEY) ?: ""
-            if (tmdbKey.isNotBlank()) {
-                var tmdbCount = 0
-                allSeries.forEach { (name, url) ->
-                    if (url !in fullMap) {
-                        try {
-                            val resp = app.get(
-                                "https://api.themoviedb.org/3/search/tv",
-                                params = mapOf("api_key" to tmdbKey, "query" to name, "language" to "de-DE")
-                            )
-                            val json = org.json.JSONObject(resp.text)
-                            json.optJSONArray("results")?.let { arr ->
-                                if (arr.length() > 0) {
-                                    arr.getJSONObject(0).optString("poster_path", "").takeIf { it.isNotBlank() }?.let {
-                                        fullMap[url] = "https://image.tmdb.org/t/p/w500$it"
-                                        tmdbCount++
-                                    }
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "TMDB search failed for '$name': ${e.message}")
-                        }
-                        kotlinx.coroutines.delay(100)
-                    }
+            allSeries.forEachIndexed { i, (name, url) ->
+                if (i > 0 && i % 10 == 0) {
+                    Log.i(TAG, "Cover sync: $i/${allSeries.size} ($fullMap.size Poster)")
                 }
-                Log.i(TAG, "Cover sync: $tmdbCount posters from TMDB")
+                try {
+                    val resp = app.get(
+                        "https://api.themoviedb.org/3/search/tv",
+                        params = mapOf("api_key" to tmdbKey, "query" to name, "language" to "de-DE")
+                    )
+                    val json = org.json.JSONObject(resp.text)
+                    json.optJSONArray("results")?.let { arr ->
+                        if (arr.length() > 0) {
+                            arr.getJSONObject(0).optString("poster_path", "").takeIf { it.isNotBlank() }?.let {
+                                fullMap[url] = "https://image.tmdb.org/t/p/w500$it"
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "TMDB search failed for '$name': ${e.message}")
+                }
+                kotlinx.coroutines.delay(100)
             }
 
-            Log.i(TAG, "Cover sync: ${fullMap.size} posters total")
+            Log.i(TAG, "Cover sync: ${fullMap.size} Poster von TMDB")
             if (fullMap.isEmpty()) {
-                Log.w(TAG, "Cover sync: empty result, NOT saving to allow retry")
                 setKey(SETTING_POSTER_MAP, "")
             } else {
                 savePosterMap(fullMap)
