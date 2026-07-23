@@ -222,18 +222,47 @@ open class SerienstreamProvider : MainAPI() {
 
         try {
             val doc = app.get("$mainUrl/serien?by=genre", headers = authHeaders()).document
-            doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").forEach { headingDiv ->
+
+            val genreData = doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { headingDiv ->
                 val genreName = headingDiv.selectFirst("h3")?.text()?.trim()?.let {
                     GENRE_NAMES[it] ?: it.replace("filter.genre_", "").replace("-", " ")
                         .replaceFirstChar { c -> c.uppercase() }
-                } ?: return@forEach
+                } ?: return@mapNotNull null
                 val ul = headingDiv.nextElementSibling()
-                if (ul == null || ul.tagName() != "ul") return@forEach
+                if (ul == null || ul.tagName() != "ul") return@mapNotNull null
                 val items = ul.select("li.series-item a").mapNotNull { a ->
                     val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
                     val name = a.text().trim()
                     if (name.isEmpty()) return@mapNotNull null
-                    newTvSeriesSearchResponse(name, href, TvType.TvSeries)
+                    Pair(name, href)
+                }
+                if (items.isEmpty()) return@mapNotNull null
+                Pair(genreName, items)
+            }
+
+            val posterMaps = genreData.amap { (genreName, _) ->
+                try {
+                    val slug = genreName.lowercase().replace(" ", "-")
+                    val gDoc = app.get("$mainUrl/genre/$slug", headers = authHeaders()).document
+                    gDoc.select("a.show-card").mapNotNull { card ->
+                        val seriesUrl = fixUrlNull(card.attr("href")) ?: return@mapNotNull null
+                        val img = card.selectFirst("img") ?: return@mapNotNull null
+                        val posterUrl = fixUrlNull(
+                            img.attr("data-src").ifEmpty { img.attr("src") }
+                        ) ?: return@mapNotNull null
+                        seriesUrl to posterUrl
+                    }.toMap()
+                } catch (_: Exception) { emptyMap() }
+            }
+
+            val posterMap = mutableMapOf<String, String?>()
+            posterMaps.forEach { posterMap.putAll(it) }
+
+            genreData.forEach { (genreName, textItems) ->
+                val items = textItems.mapNotNull { (name, href) ->
+                    newTvSeriesSearchResponse(name, href, TvType.TvSeries) {
+                        this.posterUrl = posterMap[href]
+                    }
                 }
                 if (items.isNotEmpty()) {
                     sections.add(HomePageList(genreName, items))
