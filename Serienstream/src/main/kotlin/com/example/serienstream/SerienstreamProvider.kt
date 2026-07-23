@@ -427,7 +427,6 @@ open class SerienstreamProvider : MainAPI() {
         const val SETTING_EMAIL = "serienstream_email"
         const val SETTING_PASSWORD = "serienstream_password"
         const val SETTING_POSTER_MAP = "genre_poster_map"
-        const val SETTING_TMDB_KEY = "tmdb_api_key"
         const val SETTING_SYNC_REQUESTED = "sync_requested"
         private const val TAG = "Serienstream"
         private const val BASE_URL = "https://serienstream.to"
@@ -438,135 +437,121 @@ open class SerienstreamProvider : MainAPI() {
             "filter.genre_krankenhausserie" to "Krankenhaus"
         )
 
-        fun testTmdbKey(key: String): Boolean {
-            return try {
-                val client = okhttp3.OkHttpClient()
-                val req = okhttp3.Request.Builder()
-                    .url("https://api.themoviedb.org/3/configuration?api_key=$key")
-                    .header("User-Agent", DESKTOP_UA)
-                    .get()
-                    .build()
-                val resp = client.newCall(req).execute()
-                val json = org.json.JSONObject(resp.body?.string() ?: "{}")
-                json.has("images") && !json.has("status_code")
-            } catch (_: Exception) { false }
-        }
-
         fun syncGenrePosters() {
             val email = getKey<String>(SETTING_EMAIL) ?: ""
             val password = getKey<String>(SETTING_PASSWORD) ?: ""
-            val tmdbKey = getKey<String>(SETTING_TMDB_KEY) ?: ""
             if (email.isBlank() || password.isBlank()) {
                 Log.w(TAG, "Sync: keine Login-Daten")
                 return
             }
-            if (tmdbKey.isBlank()) {
-                Log.w(TAG, "Sync: kein TMDB Key")
-                setKey(SETTING_SYNC_REQUESTED, "true")
-                return
-            }
 
             try {
-                // Login auf serienstream.to
-                val httpClient = okhttp3.OkHttpClient.Builder()
+                val client = OkHttpClient.Builder()
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .followRedirects(false)
-                    .cookieJar(object : okhttp3.CookieJar {
-                        private val store = mutableListOf<okhttp3.Cookie>()
-                        override fun saveFromResponse(url: HttpUrl, cookies: List<okhttp3.Cookie>) { store.addAll(cookies) }
-                        override fun loadForRequest(url: HttpUrl): List<okhttp3.Cookie> = store
+                    .cookieJar(object : CookieJar {
+                        private val store = mutableListOf<Cookie>()
+                        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) { store.addAll(cookies) }
+                        override fun loadForRequest(url: HttpUrl): List<Cookie> = store
                     })
                     .build()
 
-                val loginPageReq = okhttp3.Request.Builder()
+                val loginPageReq = Request.Builder()
                     .url("$BASE_URL/login")
                     .header("User-Agent", DESKTOP_UA)
                     .get()
                     .build()
-                val loginPageResp = httpClient.newCall(loginPageReq).execute()
+                val loginPageResp = client.newCall(loginPageReq).execute()
                 val loginHtml = loginPageResp.body?.string() ?: ""
                 val csrf = Regex("""name="_token"\s+value="([^"]+)""").find(loginHtml)?.groupValues?.get(1)
                 if (csrf == null) { Log.w(TAG, "Sync: CSRF nicht gefunden"); return }
 
-                val formBody = okhttp3.FormBody.Builder()
+                val formBody = FormBody.Builder()
                     .add("_token", csrf)
                     .add("email", email)
                     .add("password", password)
                     .build()
-                val loginPostReq = okhttp3.Request.Builder()
+                val loginPostReq = Request.Builder()
                     .url("$BASE_URL/login")
                     .header("User-Agent", DESKTOP_UA)
                     .header("Referer", "$BASE_URL/login")
                     .header("Origin", BASE_URL)
                     .post(formBody)
                     .build()
-                val loginResp = httpClient.newCall(loginPostReq).execute()
+                val loginResp = client.newCall(loginPostReq).execute()
                 if (loginResp.code == 302) {
                     val loc = loginResp.header("Location") ?: ""
                     val fullLoc = if (loc.startsWith("http")) loc else "$BASE_URL$loc"
-                    httpClient.newCall(okhttp3.Request.Builder()
+                    client.newCall(Request.Builder()
                         .url(fullLoc)
                         .header("User-Agent", DESKTOP_UA)
                         .get().build()).execute()
                 }
 
-                // by=genre abrufen
+                val cookies = client.cookieJar.loadForRequest("$BASE_URL/".toHttpUrl())
+                    .associate { it.name to it.value }
+
                 val genreDoc = org.jsoup.Jsoup.connect("$BASE_URL/serien?by=genre")
                     .userAgent(DESKTOP_UA)
-                    .cookies(httpClient.cookieJar.loadForRequest("$BASE_URL/".toHttpUrl())
-                        .associate { it.name to it.value })
+                    .cookies(cookies)
                     .get()
 
-                val allSeries = genreDoc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").flatMap { headingDiv ->
-                    val ul = headingDiv.nextElementSibling()
-                    if (ul == null || ul.tagName() != "ul") return@flatMap emptyList<Pair<String, String>>()
-                    ul.select("li.series-item a").mapNotNull { a ->
-                        val href = a.attr("href")
-                        val name = a.text().trim()
-                        if (name.isEmpty()) null else Pair(name, if (href.startsWith("http")) href else "$BASE_URL$href")
-                    }
+                val genreSlugs = genreDoc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { div ->
+                    val genreKey = div.selectFirst("h3")?.text()?.trim() ?: return@mapNotNull null
+                    if (genreKey.startsWith("filter.genre_"))
+                        genreKey.removePrefix("filter.genre_")
+                    else
+                        genreKey.lowercase().replace(" ", "-")
                 }
-                if (allSeries.isEmpty()) { Log.w(TAG, "Sync: keine Serien gefunden"); return }
-                Log.i(TAG, "Sync: ${allSeries.size} Serien")
+                Log.i(TAG, "Sync: ${genreSlugs.size} Genres")
 
-                // TMDB
-                val tmdbClient = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS)
-                    .build()
-                val fullMap = mutableMapOf<String, String>()
-                allSeries.forEachIndexed { i, (name, url) ->
-                    if (i > 0 && i % 10 == 0) {
-                        Log.i(TAG, "Sync: $i/${allSeries.size} (${fullMap.size} Poster)")
-                    }
-                    try {
-                        val tmdbReq = okhttp3.Request.Builder()
-                            .url("https://api.themoviedb.org/3/search/tv?api_key=$tmdbKey&query=${java.net.URLEncoder.encode(name, "UTF-8")}&language=de-DE")
-                            .header("User-Agent", DESKTOP_UA)
-                            .get().build()
-                        val tmdbResp = tmdbClient.newCall(tmdbReq).execute()
-                        val body = tmdbResp.body?.string()
-                        if (body != null) {
-                            val json = org.json.JSONObject(body)
-                            json.optJSONArray("results")?.let { arr ->
-                                if (arr.length() > 0) {
-                                    arr.getJSONObject(0).optString("poster_path", "").takeIf { it.isNotBlank() }?.let {
-                                        fullMap[url] = "https://image.tmdb.org/t/p/w500$it"
-                                    }
+                val posterMap = mutableMapOf<String, String>()
+                val seenHrefs = mutableSetOf<String>()
+
+                genreSlugs.forEach { slug ->
+                    var page = 1
+                    while (true) {
+                        val pageUrl = if (page == 1) "$BASE_URL/genre/$slug"
+                            else "$BASE_URL/genre/$slug?page=$page"
+
+                        try {
+                            val doc = org.jsoup.Jsoup.connect(pageUrl)
+                                .userAgent(DESKTOP_UA)
+                                .cookies(cookies)
+                                .get()
+
+                            val cards = doc.select("a.show-card")
+                            if (cards.isEmpty()) break
+
+                            cards.forEach { card ->
+                                val href = card.attr("href")
+                                val fullHref = if (href.startsWith("http")) href else "$BASE_URL$href"
+                                if (!seenHrefs.add(fullHref)) return@forEach
+
+                                val img = card.selectFirst("img") ?: return@forEach
+                                val poster = img.attr("data-src").ifEmpty { img.attr("src") }
+                                if (poster.isNotBlank()) {
+                                    val fullPoster = if (poster.startsWith("http")) poster else "$BASE_URL$poster"
+                                    posterMap[fullHref] = fullPoster
                                 }
                             }
+
+                            val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
+                            if (!hasNext) break
+                            page++
+                            Thread.sleep(200)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Fehler $pageUrl: ${e.message}")
+                            break
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "TMDB-Fehler '$name': ${e.message}")
                     }
-                    Thread.sleep(100)
                 }
 
-                Log.i(TAG, "Sync: ${fullMap.size} Poster gespeichert")
-                if (fullMap.isNotEmpty()) {
+                Log.i(TAG, "Sync: ${posterMap.size} Poster gespeichert")
+                if (posterMap.isNotEmpty()) {
                     val obj = org.json.JSONObject()
-                    fullMap.forEach { (k, v) -> obj.put(k, v) }
+                    posterMap.forEach { (k, v) -> obj.put(k, v) }
                     setKey(SETTING_POSTER_MAP, obj.toString())
                 } else {
                     setKey(SETTING_POSTER_MAP, "")

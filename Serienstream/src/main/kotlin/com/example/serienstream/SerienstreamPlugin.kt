@@ -31,11 +31,6 @@ class SerienstreamPlugin : Plugin() {
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
-            val tmdbInput = EditText(ctx).apply {
-                hint = "TMDB API Key"
-                setText(getKey<String>(SerienstreamProvider.SETTING_TMDB_KEY) ?: "")
-                setSingleLine()
-            }
 
             val label = TextView(ctx).apply {
                 text = "Serienstream.to Login"
@@ -48,7 +43,6 @@ class SerienstreamPlugin : Plugin() {
                 addView(label)
                 addView(emailInput)
                 addView(passwordInput)
-                addView(tmdbInput)
             }
 
             AlertDialog.Builder(ctx)
@@ -57,31 +51,18 @@ class SerienstreamPlugin : Plugin() {
                 .setPositiveButton("Speichern") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
-                    setKey(SerienstreamProvider.SETTING_TMDB_KEY, tmdbInput.text.toString())
                 }
                 .setNegativeButton("Logout") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, "")
                     setKey(SerienstreamProvider.SETTING_PASSWORD, "")
                 }
                 .setNeutralButton("Covers sync") { _, _ ->
-                    val key = tmdbInput.text.toString().trim()
-                    if (key.isBlank()) {
-                        Toast.makeText(ctx, "Bitte TMDB API-Key eingeben", Toast.LENGTH_LONG).show()
-                        return@setNeutralButton
-                    }
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
-                    setKey(SerienstreamProvider.SETTING_TMDB_KEY, key)
                     Thread {
-                        if (SerienstreamProvider.testTmdbKey(key)) {
-                            SerienstreamProvider.syncGenrePosters()
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                Toast.makeText(ctx, "Covers Sync abgeschlossen!", Toast.LENGTH_LONG).show()
-                            }
-                        } else {
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                Toast.makeText(ctx, "TMDB-Key ungültig!", Toast.LENGTH_LONG).show()
-                            }
+                        SerienstreamProvider.syncGenrePosters()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(ctx, "Covers Sync abgeschlossen!", Toast.LENGTH_LONG).show()
                         }
                     }.start()
                 }
