@@ -10,6 +10,10 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.extractors.Voe1
 import android.app.AlertDialog
+import android.os.Handler
+import android.os.Looper
+import android.widget.Toast
+import kotlinx.coroutines.runBlocking
 
 @CloudstreamPlugin
 class SerienstreamPlugin : Plugin() {
@@ -51,10 +55,25 @@ class SerienstreamPlugin : Plugin() {
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
                 }
-                .setNegativeButton("Abbrechen", null)
-                .setNeutralButton("Logout") { _, _ ->
+                .setNegativeButton("Logout") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, "")
                     setKey(SerienstreamProvider.SETTING_PASSWORD, "")
+                }
+                .setNeutralButton("Covers sync") { _, _ ->
+                    Thread {
+                        runBlocking {
+                            try {
+                                SerienstreamProvider().syncGenrePosters()
+                                Handler(Looper.getMainLooper()).post {
+                                    Toast.makeText(ctx, "Covers synchronisiert!", Toast.LENGTH_LONG).show()
+                                }
+                            } catch (e: Exception) {
+                                Handler(Looper.getMainLooper()).post {
+                                    Toast.makeText(ctx, "Fehler: ${e.message}", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        }
+                    }.start()
                 }
                 .show()
         }

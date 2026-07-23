@@ -3,6 +3,7 @@ package com.example.serienstream
 import android.util.Log
 import android.widget.Toast
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
+import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -240,23 +241,10 @@ open class SerienstreamProvider : MainAPI() {
                 Pair(genreName, items)
             }
 
-            val posterMaps = genreData.amap { (genreName, _) ->
-                try {
-                    val slug = genreName.lowercase().replace(" ", "-")
-                    val gDoc = app.get("$mainUrl/genre/$slug", headers = authHeaders()).document
-                    gDoc.select("a.show-card").mapNotNull { card ->
-                        val seriesUrl = fixUrlNull(card.attr("href")) ?: return@mapNotNull null
-                        val img = card.selectFirst("img") ?: return@mapNotNull null
-                        val posterUrl = fixUrlNull(
-                            img.attr("data-src").ifEmpty { img.attr("src") }
-                        ) ?: return@mapNotNull null
-                        seriesUrl to posterUrl
-                    }.toMap()
-                } catch (_: Exception) { emptyMap() }
+            val posterMap = loadPosterMap()
+            if (posterMap.isEmpty()) {
+                Thread { runBlocking { syncGenrePosters() } }.start()
             }
-
-            val posterMap = mutableMapOf<String, String?>()
-            posterMaps.forEach { posterMap.putAll(it) }
 
             genreData.forEach { (genreName, textItems) ->
                 val items = textItems.mapNotNull { (name, href) ->
@@ -412,9 +400,58 @@ open class SerienstreamProvider : MainAPI() {
         }
     }
 
+    suspend fun syncGenrePosters() {
+        ensureLoggedIn()
+        try {
+            val doc = app.get("$mainUrl/serien?by=genre", headers = authHeaders()).document
+            val genreNames = doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { h ->
+                h.selectFirst("h3")?.text()?.trim()?.let {
+                    GENRE_NAMES[it] ?: it.replace("filter.genre_", "").replace("-", " ")
+                        .replaceFirstChar { c -> c.uppercase() }
+                }
+            }.filter { it.isNotEmpty() }
+            val slugs = genreNames.map { it.lowercase().replace(" ", "-") }
+
+            val posterMaps = slugs.amap { slug ->
+                try {
+                    val gDoc = app.get("$mainUrl/genre/$slug", headers = authHeaders()).document
+                    gDoc.select("a.show-card").mapNotNull { card ->
+                        val seriesUrl = fixUrlNull(card.attr("href")) ?: return@mapNotNull null
+                        val img = card.selectFirst("img") ?: return@mapNotNull null
+                        fixUrlNull(img.attr("data-src").ifEmpty { img.attr("src") })?.let { posterUrl ->
+                            seriesUrl to posterUrl
+                        }
+                    }.toMap()
+                } catch (_: Exception) { emptyMap() }
+            }
+            val fullMap = mutableMapOf<String, String>()
+            posterMaps.forEach { fullMap.putAll(it) }
+            savePosterMap(fullMap)
+        } catch (e: Exception) {
+            Log.e(TAG, "Cover sync failed: ${e.message}")
+        }
+    }
+
+    private fun savePosterMap(map: Map<String, String>) {
+        val obj = org.json.JSONObject()
+        map.forEach { (k, v) -> obj.put(k, v) }
+        setKey(SETTING_POSTER_MAP, obj.toString())
+    }
+
+    private fun loadPosterMap(): Map<String, String> {
+        val json = getKey<String>(SETTING_POSTER_MAP) ?: return emptyMap()
+        val obj = org.json.JSONObject(json)
+        val map = mutableMapOf<String, String>()
+        obj.keys().forEach { key ->
+            obj.optString(key)?.let { map[key] = it }
+        }
+        return map
+    }
+
     companion object {
         const val SETTING_EMAIL = "serienstream_email"
         const val SETTING_PASSWORD = "serienstream_password"
+        const val SETTING_POSTER_MAP = "genre_poster_map"
         private const val TAG = "Serienstream"
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private val GENRE_NAMES = mapOf(
