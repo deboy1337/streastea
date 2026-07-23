@@ -253,6 +253,8 @@ open class SerienstreamProvider : MainAPI() {
             if (posterMap.isEmpty()) {
                 Log.i(TAG, "getMainPage: no cached posters, background sync started")
                 Thread { runBlocking { syncGenrePosters() } }.start()
+            } else {
+                toast("${posterMap.size} Covers geladen")
             }
 
             genreData.forEach { (genreName, textItems) ->
@@ -411,8 +413,13 @@ open class SerienstreamProvider : MainAPI() {
 
     suspend fun testTmdbKey(key: String): Boolean {
         return try {
-            val resp = app.get("https://api.themoviedb.org/3/configuration?api_key=$key")
-            val json = org.json.JSONObject(resp.text)
+            val req = okhttp3.Request.Builder()
+                .url("https://api.themoviedb.org/3/configuration?api_key=$key")
+                .header("User-Agent", DESKTOP_UA)
+                .get()
+                .build()
+            val resp = okhttp3.OkHttpClient().newCall(req).execute()
+            val json = org.json.JSONObject(resp.body?.string() ?: "{}")
             json.has("images") && !json.has("status_code")
         } catch (_: Exception) { false }
     }
@@ -425,6 +432,11 @@ open class SerienstreamProvider : MainAPI() {
             setKey(SETTING_SYNC_REQUESTED, "true")
             return
         }
+
+        val client = okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
 
         try {
             val doc = app.get("$mainUrl/serien?by=genre", headers = authHeaders()).document
@@ -446,18 +458,24 @@ open class SerienstreamProvider : MainAPI() {
             val fullMap = mutableMapOf<String, String>()
             allSeries.forEachIndexed { i, (name, url) ->
                 if (i > 0 && i % 10 == 0) {
-                    Log.i(TAG, "Cover sync: $i/${allSeries.size} ($fullMap.size Poster)")
+                    Log.i(TAG, "Cover sync: $i/${allSeries.size} (${fullMap.size} Poster)")
                 }
                 try {
-                    val resp = app.get(
-                        "https://api.themoviedb.org/3/search/tv",
-                        params = mapOf("api_key" to tmdbKey, "query" to name, "language" to "de-DE")
-                    )
-                    val json = org.json.JSONObject(resp.text)
-                    json.optJSONArray("results")?.let { arr ->
-                        if (arr.length() > 0) {
-                            arr.getJSONObject(0).optString("poster_path", "").takeIf { it.isNotBlank() }?.let {
-                                fullMap[url] = "https://image.tmdb.org/t/p/w500$it"
+                    val req = okhttp3.Request.Builder()
+                        .url("https://api.themoviedb.org/3/search/tv?api_key=$tmdbKey&query=${java.net.URLEncoder.encode(name, "UTF-8")}&language=de-DE")
+                        .header("User-Agent", DESKTOP_UA)
+                        .get()
+                        .build()
+                    val resp = client.newCall(req).execute()
+                    val body = resp.body?.string()
+                    if (body != null) {
+                        val json = org.json.JSONObject(body)
+                        json.optJSONArray("results")?.let { arr ->
+                            if (arr.length() > 0) {
+                                val posterPath = arr.getJSONObject(0).optString("poster_path", "")
+                                if (posterPath.isNotBlank()) {
+                                    fullMap[url] = "https://image.tmdb.org/t/p/w500$posterPath"
+                                }
                             }
                         }
                     }
