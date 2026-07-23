@@ -346,20 +346,6 @@ open class SerienstreamProvider : MainAPI() {
         val document = app.get(data, headers = authHeaders()).document
 
         val gate = document.selectFirst("[data-redirect-gate-tier]")
-        if (gate != null) {
-            val cached = getCachedHosters()
-            if (cached.isNotEmpty()) {
-                Log.w(TAG, "⚠️ Gate erkannt, aber verwende ${cached.size} gecachte Hoster")
-                setCachedHosters(emptyList())
-                setKey(SETTING_CAPTCHA_URL, "")
-                processHosters(cached, data, subtitleCallback, callback)
-                return true
-            }
-            val tier = gate.attr("data-redirect-gate-tier")
-            Log.w(TAG, "⚠️ Captcha/Gate erkannt: $tier")
-            setKey(SETTING_CAPTCHA_URL, data)
-            return false
-        }
 
         val buttons = document.select("button.link-box[data-play-url]").sortedBy { button ->
             when (button.attr("data-language-label").trim()) {
@@ -369,15 +355,37 @@ open class SerienstreamProvider : MainAPI() {
             }
         }
 
-        val hosterList = buttons.map { button ->
-            listOf(
-                button.attr("data-play-url").trim(),
-                button.attr("data-provider-name"),
-                button.attr("data-language-label").trim()
-            )
+        if (buttons.isNotEmpty()) {
+            val hosterList = buttons.map { button ->
+                listOf(
+                    button.attr("data-play-url").trim(),
+                    button.attr("data-provider-name"),
+                    button.attr("data-language-label").trim()
+                )
+            }
+            processHosters(hosterList, data, subtitleCallback, callback)
+            return true
         }
-        processHosters(hosterList, data, subtitleCallback, callback)
-        return true
+
+        val cached = getCachedHosters()
+        if (cached.isNotEmpty()) {
+            Log.w(TAG, "Using ${cached.size} cached hosters")
+            setCachedHosters(emptyList())
+            setKey(SETTING_CAPTCHA_URL, "")
+            processHosters(cached, data, subtitleCallback, callback)
+            return true
+        }
+
+        if (gate != null) {
+            val tier = gate.attr("data-redirect-gate-tier")
+            Log.w(TAG, "⚠️ Gate detected ($tier), no hosters found")
+            setKey(SETTING_CAPTCHA_URL, data)
+            toast("Serienstream: Captcha nötig - Einstellungen > Captcha lösen")
+            return false
+        }
+
+        Log.w(TAG, "No hosters found on $data")
+        return false
     }
 
     private suspend fun processHosters(
