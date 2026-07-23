@@ -2,17 +2,17 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 8,
+    "version": 9,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": ["deboy1337"],
-    "description": "Serienstream.to Provider (v8) Login fix mit User-Agent + DdosGuard Cookies",
-    "fileSize": 26992,
+    "description": "Serienstream.to Provider (v9) OkHttp mit CookieJar fuer Login",
+    "fileSize": 28349,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
     "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-9807f34855982c44f28d28d37f0d85654549be6e091a306840919e091e45cb9c"
+    "fileHash": "sha256-93f79bf84c659f9ebc188f11d429a8dd6a6abb0ee434f909b670c3f9a3b7354b"
   }
 ]
