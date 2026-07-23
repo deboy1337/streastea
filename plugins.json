@@ -1,23 +1,23 @@
 [
   {
-    "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
-    "status": 1,
-    "version": 30,
-    "name": "Serienstream",
-    "internalName": "Serienstream",
+    "apiVersion": 1,
     "authors": [
       "Streamable"
     ],
     "description": "Serien online ansehen und streamen - SerienStream.to (v30)",
-    "fileSize": 39918,
-    "repositoryUrl": "https://github.com/deboy1337/streastea",
+    "fileHash": "sha256-0ec667be4819b4c69140357c98031cc22457891b1eedffa2c943c452a6476f6a",
+    "fileSize": 41050,
+    "hash": "0ec667be4819b4c69140357c98031cc22457891b1eedffa2c943c452a6476f6a",
+    "iconUrl": "https://www.google.com/s2/favicons?domain=https://serienstream.to&sz=%size%",
+    "internalName": "Serienstream",
     "language": "de",
+    "name": "Serienstream",
+    "repositoryUrl": "https://github.com/deboy1337/streastea",
+    "status": 1,
     "tvTypes": [
       "TvSeries"
     ],
-    "iconUrl": "https://www.google.com/s2/favicons?domain=https://serienstream.to&sz=%size%",
-    "apiVersion": 1,
-    "fileHash": "sha256-85470d54672f2246e07104cb7e37700f8e4ab578dc09f370166298ec6f646f69",
-    "hash": "85470d54672f2246e07104cb7e37700f8e4ab578dc09f370166298ec6f646f69"
+    "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
+    "version": 31
   }
 ]
