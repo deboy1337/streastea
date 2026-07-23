@@ -343,9 +343,9 @@ open class SerienstreamProvider : MainAPI() {
 
         val document = app.get(data, headers = authHeaders()).document
 
-        val buttons = document.select("button.link-box[data-play-url]")
+        var buttons = document.select("button.link-box[data-play-url][data-language-label=Deutsch]")
         if (buttons.isEmpty()) {
-            return false
+            buttons = document.select("button.link-box[data-play-url]")
         }
 
         buttons.amap { button ->
