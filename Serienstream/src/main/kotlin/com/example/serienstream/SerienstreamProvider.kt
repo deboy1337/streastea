@@ -201,8 +201,8 @@ open class SerienstreamProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (getKey<String>(SETTING_SYNC_REQUESTED) == "true") {
             setKey(SETTING_SYNC_REQUESTED, "false")
-            Log.i(TAG, "getMainPage: sync requested via settings flag")
-            syncGenrePosters()
+            Log.i(TAG, "getMainPage: sync requested via settings flag, launching background thread")
+            Thread { runBlocking { syncGenrePosters() } }.start()
         }
 
         ensureLoggedIn()
@@ -473,7 +473,7 @@ open class SerienstreamProvider : MainAPI() {
                         } catch (e: Exception) {
                             Log.w(TAG, "TMDB search failed for '$name': ${e.message}")
                         }
-                        kotlinx.coroutines.delay(200)
+                        kotlinx.coroutines.delay(100)
                     }
                 }
                 Log.i(TAG, "Cover sync: $tmdbCount posters from TMDB")
