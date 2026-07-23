@@ -2,17 +2,17 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 9,
+    "version": 10,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": ["deboy1337"],
-    "description": "Serienstream.to Provider (v9) OkHttp mit CookieJar fuer Login",
-    "fileSize": 28349,
+    "description": "Serienstream.to Provider (v10) Login-Cookies fuer authentifizierte Anfragen",
+    "fileSize": 28752,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
     "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-93f79bf84c659f9ebc188f11d429a8dd6a6abb0ee434f909b670c3f9a3b7354b"
+    "fileHash": "sha256-33a76dee87d14c3bd06a5e482c4097cc1b6e054da361e195cee51e9f51be2326"
   }
 ]
