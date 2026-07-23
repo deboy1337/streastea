@@ -2,17 +2,17 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 3,
+    "version": 4,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": ["deboy1337"],
-    "description": "Serienstream.to Provider (v3) mit WebView Captcha-Loesung",
-    "fileSize": 28555,
+    "description": "Serienstream.to Provider (v4) mit WebView Captcha-Loesung via Activity",
+    "fileSize": 28133,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
-    "tvTypes": ["TvSeries", "Movie"],
+    "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-6e7a78e12b27c3e60dac411d9286010894ecc3bfadd7a8e574225f0cf61d6488"
+    "fileHash": "sha256-ddd8ca5504404d4e88413b9c61cd84079021fadb168e962ab8d32b6d53407ab5"
   }
 ]
