@@ -202,19 +202,40 @@ open class SerienstreamProvider : MainAPI() {
         val sections = mutableListOf<HomePageList>()
 
         try {
-            // Get genre list from /suche?tab=genres
-            val genresDoc = app.get("$mainUrl/suche", params = mapOf("tab" to "genres"), headers = authHeaders()).document
-            val genreLinks = genresDoc.select("a[href*='/genre/']").distinctBy { it.attr("href") }
+            val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
 
-            // Fetch each genre page and add as a section
+            document.select(".popular-page > div").forEach { elem ->
+                val header = elem.selectFirst("div > h2")?.text()?.trim() ?: return@forEach
+                val items = elem.select("a.show-card").mapNotNull { it.toShowCardResult() }
+                if (items.isNotEmpty()) {
+                    sections.add(HomePageList(header, items))
+                }
+            }
+
+            if (sections.isEmpty()) {
+                val items = document.select("a.show-card").mapNotNull { it.toShowCardResult() }
+                if (items.isNotEmpty()) {
+                    sections.add(HomePageList("Beliebte Serien", items))
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load beliebte-serien: ${e.message}")
+        }
+
+        try {
+            val genreDoc = app.get("$mainUrl/suche", params = mapOf("tab" to "genres"), headers = authHeaders()).document
+            val genreLinks = genreDoc.select("a[href*='/genre/']")
+                .distinctBy { it.attr("href") }
+                .take(6)
+
             genreLinks.forEach { el ->
                 val href = fixUrlNull(el.attr("href")) ?: return@forEach
                 val genreName = el.text().trim()
                 if (genreName.isEmpty()) return@forEach
 
                 try {
-                    val genreDoc = app.get(href, headers = authHeaders()).document
-                    val items = genreDoc.select(".results-group .card").mapNotNull { it.toSearchResult() }
+                    val gDoc = app.get(href, headers = authHeaders()).document
+                    val items = gDoc.select("a.show-card").mapNotNull { it.toShowCardResult() }
                     if (items.isNotEmpty()) {
                         sections.add(HomePageList(genreName, items))
                     }
@@ -223,8 +244,7 @@ open class SerienstreamProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load main page: ${e.message}")
-            toast("Serienstream: Fehler beim Laden der Startseite")
+            Log.e(TAG, "Failed to load genres: ${e.message}")
         }
 
         return newHomePageResponse(sections, hasNext = false)
@@ -240,6 +260,8 @@ open class SerienstreamProvider : MainAPI() {
 
         return resp.select(".results-group .card").mapNotNull {
             it.toSearchResult()
+        }.ifEmpty {
+            resp.select("a.show-card").mapNotNull { it.toShowCardResult() }
         }
     }
 
