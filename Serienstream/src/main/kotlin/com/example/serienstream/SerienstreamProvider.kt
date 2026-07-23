@@ -3,7 +3,6 @@ package com.example.serienstream
 import android.util.Log
 import android.widget.Toast
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
-import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
@@ -25,9 +24,20 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Cookie
+import okhttp3.CookieJar
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Element
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 open class SerienstreamProvider : MainAPI() {
     override var mainUrl = "https://serienstream.to"
@@ -48,6 +58,38 @@ open class SerienstreamProvider : MainAPI() {
         } catch (_: Exception) {}
     }
 
+    private fun createCookieClient(): OkHttpClient {
+        val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
+
+        val cookieJar = object : CookieJar {
+            override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                val key = url.host
+                cookieStore.getOrPut(key) { mutableListOf() }.apply {
+                    removeAll { existing -> cookies.any { it.name == existing.name && it.path == existing.path } }
+                    addAll(cookies)
+                }
+            }
+
+            override fun loadForRequest(url: HttpUrl): List<Cookie> {
+                val key = url.host
+                val now = System.currentTimeMillis() / 1000
+                return cookieStore[key]?.filter { cookie ->
+                    val notExpired = cookie.expiresAt == -1L || cookie.expiresAt > now
+                    val pathMatch = url.encodedPath.startsWith(cookie.path)
+                    val domainMatch = url.host == cookie.domain || url.host.endsWith(".${cookie.domain}")
+                    notExpired && pathMatch && domainMatch
+                } ?: emptyList()
+            }
+        }
+
+        return OkHttpClient.Builder()
+            .cookieJar(cookieJar)
+            .connectTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .build()
+    }
+
     private suspend fun ensureLoggedIn() {
         if (isLoggedIn || triedLogin) return
         triedLogin = true
@@ -60,13 +102,25 @@ open class SerienstreamProvider : MainAPI() {
             return
         }
 
+        val client = createCookieClient()
+
         try {
-            val loginPageResp = app.get(
-                "$mainUrl/login",
-                headers = mapOf("User-Agent" to DESKTOP_UA)
-            )
-            val doc = loginPageResp.document
-            val csrfToken = doc.selectFirst("input[name='_token']")?.attr("value")
+            // Step 1: GET login page to get CSRF token + DdosGuard cookies
+            val loginPageRequest = Request.Builder()
+                .url("$mainUrl/login")
+                .header("User-Agent", DESKTOP_UA)
+                .get()
+                .build()
+
+            val loginPageResponse = client.newCall(loginPageRequest).execute()
+            val loginPageHtml = loginPageResponse.body?.string() ?: ""
+
+            // Extract CSRF token from meta tag or hidden input
+            val csrfToken = Regex("""name="_token"\s+value="([^"]+)""").find(loginPageHtml)
+                ?.groupValues?.get(1)
+                ?: Regex("""content="([^"]+)"\s*""").find(
+                    Regex("""meta\s+name="csrf-token"\s+content="([^"]+)""").find(loginPageHtml)?.value ?: ""
+                )?.groupValues?.get(1)
 
             if (csrfToken == null) {
                 Log.e(TAG, "CSRF token not found on login page")
@@ -74,72 +128,87 @@ open class SerienstreamProvider : MainAPI() {
                 return
             }
 
-            Log.d(TAG, "Attempting login with email: $email")
+            // Log cookies from login page
+            val cookiesAfterGet = client.cookieJar.loadForRequest("$mainUrl/login".toHttpUrl())
+            Log.d(TAG, "Cookies after GET /login: ${cookiesAfterGet.map { "${it.name}=${it.value.take(20)}..." }}")
+
             toast("Serienstream: Login wird versucht...")
 
-            val loginResp = app.post(
-                "$mainUrl/login",
-                data = mapOf(
-                    "_token" to csrfToken,
-                    "email" to email,
-                    "password" to password
-                ),
-                headers = mapOf(
-                    "Referer" to "$mainUrl/login",
-                    "Origin" to mainUrl,
-                    "User-Agent" to DESKTOP_UA,
-                    "X-XSRF-TOKEN" to csrfToken
-                )
-            )
+            // Step 2: POST login
+            val formBody = FormBody.Builder()
+                .add("_token", csrfToken)
+                .add("email", email)
+                .add("password", password)
+                .build()
 
-            val respUrl = loginResp.url.toString()
-            val respDoc = loginResp.document
-            val hasError = respDoc.select(".alert-danger, .invalid-feedback, .error").isNotEmpty()
-            val stillOnLogin = respUrl.contains("/login")
+            val postRequest = Request.Builder()
+                .url("$mainUrl/login")
+                .header("User-Agent", DESKTOP_UA)
+                .header("Referer", "$mainUrl/login")
+                .header("Origin", mainUrl)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+                .header("X-XSRF-TOKEN", csrfToken)
+                .post(formBody)
+                .build()
 
-            Log.d(TAG, "Login response URL: $respUrl, stillOnLogin: $stillOnLogin, hasError: $hasError")
+            val postResponse = client.newCall(postRequest).execute()
+            val postCode = postResponse.code
+            val postUrl = postResponse.request.url.toString()
+            val postRedirectUrl = postResponse.header("Location")
 
-            if (stillOnLogin || hasError) {
-                val errorText = respDoc.select(".alert-danger, .invalid-feedback").text()
-                Log.e(TAG, "Login failed. Error: $errorText")
-                toast("Serienstream: Login fehlgeschlagen: ${errorText.ifEmpty { "Unbekannter Fehler" }}")
-                return
-            }
+            Log.d(TAG, "POST /login response: code=$postCode, url=$postUrl, redirect=$postRedirectUrl")
 
-            // Verify by checking /account page for username
-            Log.d(TAG, "Login POST succeeded, verifying via /account...")
-            val accountResp = app.get("$mainUrl/account", headers = mapOf("User-Agent" to DESKTOP_UA))
-            val accountDoc = accountResp.document
-            val accountUrl = accountResp.url.toString()
-            val accountHtml = accountDoc.html()
+            val cookiesAfterPost = client.cookieJar.loadForRequest("$mainUrl/login".toHttpUrl())
+            Log.d(TAG, "Cookies after POST: ${cookiesAfterPost.map { "${it.name}=${it.value.take(20)}..." }}")
 
-            // Check if we got redirected back to login
-            if (accountUrl.contains("/login")) {
-                Log.e(TAG, "Account check redirected to login - session not maintained")
-                toast("Serienstream: Session nicht gueltig (weitergeleitet zu Login)")
-                return
-            }
+            // Handle redirect manually if 302
+            if (postCode == 302 || postCode == 301) {
+                val redirectLocation = postResponse.header("Location") ?: ""
+                val fullRedirectUrl = if (redirectLocation.startsWith("http")) redirectLocation
+                    else "$mainUrl$redirectLocation"
 
-            // Check for username indicators in the account page
-            val hasWelcome = accountHtml.contains("Willkommen")
-            val hasLogout = accountDoc.select("a[href*='logout']").isNotEmpty()
-            val hasProfileLink = accountDoc.select("a[href*='profil'], a[href*='account']").isNotEmpty()
-            val bodyText = accountDoc.body()?.text() ?: ""
+                Log.d(TAG, "Following redirect to: $fullRedirectUrl")
 
-            Log.d(TAG, "Account page - hasWelcome: $hasWelcome, hasLogout: $hasLogout, hasProfileLink: $hasProfileLink")
-            Log.d(TAG, "Account page title: ${accountDoc.title()}")
-            Log.d(TAG, "Account body text (first 500 chars): ${bodyText.take(500)}")
+                // Step 3: Follow redirect to verify login
+                val verifyRequest = Request.Builder()
+                    .url(fullRedirectUrl)
+                    .header("User-Agent", DESKTOP_UA)
+                    .get()
+                    .build()
 
-            if (hasLogout || hasWelcome) {
-                isLoggedIn = true
-                val msg = "Serienstream: Login erfolgreich! Willkommen!"
-                Log.d(TAG, msg)
-                toast(msg)
+                val verifyResponse = client.newCall(verifyRequest).execute()
+                val verifyHtml = verifyResponse.body?.string() ?: ""
+                val verifyUrl = verifyResponse.request.url.toString()
+
+                Log.d(TAG, "Verify URL: $verifyUrl")
+                Log.d(TAG, "Has 'Willkommen': ${verifyHtml.contains("Willkommen")}")
+                Log.d(TAG, "Has 'logout': ${verifyHtml.contains("logout")}")
+                Log.d(TAG, "Has 'Anmelden': ${verifyHtml.contains(">Anmelden<")}")
+
+                if (verifyHtml.contains("Willkommen") || verifyHtml.contains("logout")) {
+                    isLoggedIn = true
+                    toast("Serienstream: Login erfolgreich!")
+                    Log.d(TAG, "Login successful!")
+                } else {
+                    Log.e(TAG, "Login verification failed. HTML snippet: ${verifyHtml.take(500)}")
+                    toast("Serienstream: Login fehlgeschlagen")
+                }
+            } else if (postCode == 200) {
+                // Check if we're still on login page
+                val bodyHtml = postResponse.body?.string() ?: ""
+                if (bodyHtml.contains("Anmelden") && bodyHtml.contains("_token")) {
+                    Log.e(TAG, "Login failed - still on login page")
+                    val errorMsg = Regex("""class="alert-danger[^"]*"[^>]*>([^<]+)""").find(bodyHtml)
+                        ?.groupValues?.get(1)?.trim() ?: "Falsche Zugangsdaten?"
+                    toast("Serienstream: Login fehlgeschlagen: $errorMsg")
+                } else {
+                    isLoggedIn = true
+                    toast("Serienstream: Login erfolgreich!")
+                }
             } else {
-                Log.w(TAG, "Login verification unclear - account page doesn't show welcome/logout")
-                toast("Serienstream: Login unklar - Account-Seite pruefen")
-                // Still try to proceed - maybe login worked but account page is different
-                isLoggedIn = true
+                Log.e(TAG, "Unexpected response code: $postCode")
+                toast("Serienstream: Login Fehler (HTTP $postCode)")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Login exception: ${e.message}", e)
@@ -219,29 +288,24 @@ open class SerienstreamProvider : MainAPI() {
     ): Boolean {
         ensureLoggedIn()
 
-        toast("Serienstream: Lade Streams fuer $data")
+        toast("Serienstream: Lade Streams...")
 
         val document = app.get(data, headers = mapOf("User-Agent" to DESKTOP_UA)).document
         val pageHtml = document.html()
         val title = document.selectFirst("h1")?.text() ?: "unbekannt"
 
-        Log.d(TAG, "Episode page title: $title")
-        Log.d(TAG, "Episode page URL: $data")
-        Log.d(TAG, "Has gate div: ${pageHtml.contains("episode-redirect-gate")}")
+        Log.d(TAG, "Episode: $title")
         Log.d(TAG, "Has play buttons: ${pageHtml.contains("data-play-url")}")
 
         val buttons = document.select("button.link-box[data-play-url]")
         if (buttons.isEmpty()) {
-            val allButtons = document.select("button")
-            val allLinks = document.select("a[href*='stream'], a[href*='embed']")
-            Log.w(TAG, "No hoster buttons found. All buttons: ${allButtons.size}, stream links: ${allLinks.size}")
-            Log.d(TAG, "Page body (first 2000 chars): ${document.body()?.html()?.take(2000)}")
-            toast("Serienstream: Keine Hoster gefunden auf '$title'")
+            Log.w(TAG, "No hoster buttons. Body: ${document.body()?.html()?.take(1500)}")
+            toast("Serienstream: Keine Hoster fuer '$title'")
             return false
         }
 
-        Log.d(TAG, "Found ${buttons.size} hoster buttons, logged in: $isLoggedIn")
-        toast("Serienstream: ${buttons.size} Hoster gefunden fuer '$title'")
+        Log.d(TAG, "Found ${buttons.size} hosters, logged in: $isLoggedIn")
+        toast("Serienstream: ${buttons.size} Hoster fuer '$title'")
 
         buttons.amap { button ->
             val playUrl = button.attr("data-play-url").trim()
@@ -249,26 +313,20 @@ open class SerienstreamProvider : MainAPI() {
             val language = button.attr("data-language-label")
             if (playUrl.isEmpty()) return@amap
 
-            Log.d(TAG, "Trying hoster: $source [$language] -> $playUrl")
-            toast("Serienstream: Teste $source ($language)...")
+            Log.d(TAG, "Hoster: $source [$language] -> $playUrl")
 
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl, headers = mapOf("User-Agent" to DESKTOP_UA))
-                val respBody = resp.document.html()
-                Log.d(TAG, "Hoster response URL: ${resp.url}")
-                Log.d(TAG, "Hoster response has iframe: ${respBody.contains("<iframe")}")
-                Log.d(TAG, "Hoster response (first 1000): ${respBody.take(1000)}")
+                Log.d(TAG, "Redirect: $streamUrl -> ${resp.url}")
                 resp.url
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to resolve hoster URL $streamUrl: ${e.message}")
-                toast("Serienstream: Fehler bei $source: ${e.message}")
+                Log.e(TAG, "Failed: $streamUrl: ${e.message}")
                 streamUrl
             }
 
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
-                Log.d(TAG, "Loaded stream from ${link.name}: quality=${link.quality}")
-                toast("Serienstream: Stream gefunden: ${link.name} (${link.quality})")
+                Log.d(TAG, "Stream: ${link.name} q=${link.quality}")
                 callback.invoke(link)
             }
         }
