@@ -343,9 +343,12 @@ open class SerienstreamProvider : MainAPI() {
 
         val document = app.get(data, headers = authHeaders()).document
 
-        var buttons = document.select("button.link-box[data-play-url][data-language-label=Deutsch]")
-        if (buttons.isEmpty()) {
-            buttons = document.select("button.link-box[data-play-url]")
+        val buttons = document.select("button.link-box[data-play-url]").sortedBy { button ->
+            when (button.attr("data-language-label").trim()) {
+                "Deutsch" -> 0
+                "Ger-Sub" -> 1
+                else -> 2
+            }
         }
 
         buttons.amap { button ->
