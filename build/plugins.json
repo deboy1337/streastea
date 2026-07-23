@@ -2,7 +2,7 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 30,
+    "version": 31,
     "name": "Serienstream",
     "internalName": "Serienstream",
     "authors": [
@@ -17,7 +17,7 @@
     ],
     "iconUrl": "https://www.google.com/s2/favicons?domain=https://serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-9f562d569b54c92eb3497548710d7d98b990467d6f081bbedacf15d8fa623ad4",
-    "hash": "9f562d569b54c92eb3497548710d7d98b990467d6f081bbedacf15d8fa623ad4"
+    "fileHash": "sha256-0ec667be4819b4c69140357c98031cc22457891b1eedffa2c943c452a6476f6a",
+    "hash": "0ec667be4819b4c69140357c98031cc22457891b1eedffa2c943c452a6476f6a"
   }
 ]
