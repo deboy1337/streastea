@@ -228,8 +228,13 @@ open class SerienstreamProvider : MainAPI() {
                 if (genreName.isEmpty()) return@forEach
                 try {
                     val gDoc = app.get(href, headers = authHeaders()).document
-                    val items = gDoc.select("a.show-card").mapNotNull { it.toShowCardResult() }
+                    val items = gDoc.select("a.show-card").mapNotNull { it.toShowCardResult() }.toMutableList()
                     if (items.isNotEmpty()) {
+                        items.add(newTvSeriesSearchResponse(
+                            "Alle $genreName anzeigen  →",
+                            fixUrl(href),
+                            TvType.TvSeries
+                        ) { this.posterUrl = null })
                         sections.add(HomePageList(genreName, items))
                     }
                 } catch (e: Exception) {
@@ -260,6 +265,27 @@ open class SerienstreamProvider : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse? {
         ensureLoggedIn()
+
+        if (url.contains("/genre/") && !url.contains("/serie/")) {
+            val allItems = mutableListOf<SearchResponse>()
+            var nextUrl: String? = url
+            while (nextUrl != null) {
+                val doc = app.get(nextUrl, headers = authHeaders()).document
+                val pageItems = doc.select("a.show-card").mapNotNull { it.toShowCardResult() }
+                if (pageItems.isEmpty()) break
+                allItems.addAll(pageItems)
+                nextUrl = doc.selectFirst("a[rel='next']")?.let { fixUrlNull(it.attr("href")) }
+            }
+            val genreName = url.substringAfterLast("/genre/").substringBefore("?").replace("-", " ")
+                .replaceFirstChar { it.uppercase() }
+            val episodes = allItems.map { item ->
+                newEpisode(item.url) {
+                    this.name = item.name
+                    this.posterUrl = item.posterUrl
+                }
+            }
+            return newTvSeriesLoadResponse("Genre: $genreName", url, TvType.TvSeries, episodes)
+        }
 
         val document = app.get(url, headers = authHeaders()).document
         val title = document.selectFirst("h1")?.text()
@@ -309,6 +335,17 @@ open class SerienstreamProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         ensureLoggedIn()
+
+        if (!data.contains("/staffel-") && !data.contains("/episode-")) {
+            val doc = app.get(data, headers = authHeaders()).document
+            val firstSeason = doc.selectFirst("#season-nav a.alphabet-link") ?: return false
+            val seasonDoc = app.get(fixUrl(firstSeason.attr("href")), headers = authHeaders()).document
+            val firstEpisode = seasonDoc.selectFirst("tr.episode-row") ?: return false
+            val episodeUrl = firstEpisode.attr("onclick")
+                ?.substringAfter("window.location='")
+                ?.substringBefore("'") ?: return false
+            return loadLinks(fixUrl(episodeUrl), isCasting, subtitleCallback, callback)
+        }
 
         val document = app.get(data, headers = authHeaders()).document
 
