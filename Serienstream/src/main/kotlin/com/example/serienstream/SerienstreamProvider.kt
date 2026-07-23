@@ -61,7 +61,10 @@ open class SerienstreamProvider : MainAPI() {
         }
 
         try {
-            val loginPageResp = app.get("$mainUrl/login")
+            val loginPageResp = app.get(
+                "$mainUrl/login",
+                headers = mapOf("User-Agent" to DESKTOP_UA)
+            )
             val doc = loginPageResp.document
             val csrfToken = doc.selectFirst("input[name='_token']")?.attr("value")
 
@@ -84,7 +87,8 @@ open class SerienstreamProvider : MainAPI() {
                 headers = mapOf(
                     "Referer" to "$mainUrl/login",
                     "Origin" to mainUrl,
-                    "Content-Type" to "application/x-www-form-urlencoded"
+                    "User-Agent" to DESKTOP_UA,
+                    "X-XSRF-TOKEN" to csrfToken
                 )
             )
 
@@ -104,7 +108,7 @@ open class SerienstreamProvider : MainAPI() {
 
             // Verify by checking /account page for username
             Log.d(TAG, "Login POST succeeded, verifying via /account...")
-            val accountResp = app.get("$mainUrl/account")
+            val accountResp = app.get("$mainUrl/account", headers = mapOf("User-Agent" to DESKTOP_UA))
             val accountDoc = accountResp.document
             val accountUrl = accountResp.url.toString()
             val accountHtml = accountDoc.html()
@@ -145,19 +149,19 @@ open class SerienstreamProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/beliebte-serien").document
+        val document = app.get("$mainUrl/beliebte-serien", headers = mapOf("User-Agent" to DESKTOP_UA)).document
         val items = document.select("a.show-card").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(listOf(HomePageList("Beliebte Serien", items)), hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/search", params = mapOf("q" to query)).document
+        val document = app.get("$mainUrl/search", params = mapOf("q" to query), headers = mapOf("User-Agent" to DESKTOP_UA)).document
         return document.select("a.show-card").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url).document
+        val document = app.get(url, headers = mapOf("User-Agent" to DESKTOP_UA)).document
         val title = document.selectFirst("h1")?.text()
             ?: throw Error("Titel konnte nicht gefunden werden")
         val poster = fixUrlNull(
@@ -174,7 +178,7 @@ open class SerienstreamProvider : MainAPI() {
         val episodes = seasons.flatMap { seasonLink ->
             val seasonNum = seasonLink.text().trim().toIntOrNull() ?: return@flatMap emptyList()
             val seasonUrl = fixUrl(seasonLink.attr("href"))
-            val seasonDoc = app.get(seasonUrl).document
+            val seasonDoc = app.get(seasonUrl, headers = mapOf("User-Agent" to DESKTOP_UA)).document
             seasonDoc.select("tr.episode-row").mapNotNull { row ->
                 val episodeNum = row.selectFirst(".episode-number-cell")
                     ?.text()?.trim()?.toIntOrNull()
@@ -217,7 +221,7 @@ open class SerienstreamProvider : MainAPI() {
 
         toast("Serienstream: Lade Streams fuer $data")
 
-        val document = app.get(data).document
+        val document = app.get(data, headers = mapOf("User-Agent" to DESKTOP_UA)).document
         val pageHtml = document.html()
         val title = document.selectFirst("h1")?.text() ?: "unbekannt"
 
@@ -250,7 +254,7 @@ open class SerienstreamProvider : MainAPI() {
 
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
-                val resp = app.get(streamUrl)
+                val resp = app.get(streamUrl, headers = mapOf("User-Agent" to DESKTOP_UA))
                 val respBody = resp.document.html()
                 Log.d(TAG, "Hoster response URL: ${resp.url}")
                 Log.d(TAG, "Hoster response has iframe: ${respBody.contains("<iframe")}")
@@ -287,5 +291,6 @@ open class SerienstreamProvider : MainAPI() {
         const val SETTING_EMAIL = "serienstream_email"
         const val SETTING_PASSWORD = "serienstream_password"
         private const val TAG = "Serienstream"
+        private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
     }
 }
