@@ -10,10 +10,7 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.extractors.Voe1
 import android.app.AlertDialog
-import android.os.Handler
-import android.os.Looper
 import android.widget.Toast
-import kotlinx.coroutines.runBlocking
 
 @CloudstreamPlugin
 class SerienstreamPlugin : Plugin() {
@@ -34,6 +31,11 @@ class SerienstreamPlugin : Plugin() {
                 inputType = android.text.InputType.TYPE_CLASS_TEXT or
                     android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
             }
+            val tmdbInput = EditText(ctx).apply {
+                hint = "TMDB API Key"
+                setText(getKey<String>(SerienstreamProvider.SETTING_TMDB_KEY) ?: "")
+                setSingleLine()
+            }
 
             val label = TextView(ctx).apply {
                 text = "Serienstream.to Login"
@@ -46,34 +48,24 @@ class SerienstreamPlugin : Plugin() {
                 addView(label)
                 addView(emailInput)
                 addView(passwordInput)
+                addView(tmdbInput)
             }
 
             AlertDialog.Builder(ctx)
-                .setTitle("Serienstream Login")
+                .setTitle("Serienstream Einstellungen")
                 .setView(layout)
                 .setPositiveButton("Speichern") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
+                    setKey(SerienstreamProvider.SETTING_TMDB_KEY, tmdbInput.text.toString())
                 }
                 .setNegativeButton("Logout") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, "")
                     setKey(SerienstreamProvider.SETTING_PASSWORD, "")
                 }
                 .setNeutralButton("Covers sync") { _, _ ->
-                    Thread {
-                        runBlocking {
-                            try {
-                                SerienstreamProvider().syncGenrePosters()
-                                Handler(Looper.getMainLooper()).post {
-                                    Toast.makeText(ctx, "Covers synchronisiert!", Toast.LENGTH_LONG).show()
-                                }
-                            } catch (e: Exception) {
-                                Handler(Looper.getMainLooper()).post {
-                                    Toast.makeText(ctx, "Fehler: ${e.message}", Toast.LENGTH_LONG).show()
-                                }
-                            }
-                        }
-                    }.start()
+                    setKey(SerienstreamProvider.SETTING_SYNC_REQUESTED, "true")
+                    Toast.makeText(ctx, "Sync beim nächsten Startseiten-Laden", Toast.LENGTH_LONG).show()
                 }
                 .show()
         }

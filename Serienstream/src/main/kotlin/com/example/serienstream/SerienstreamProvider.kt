@@ -199,6 +199,12 @@ open class SerienstreamProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        if (getKey<String>(SETTING_SYNC_REQUESTED) == "true") {
+            setKey(SETTING_SYNC_REQUESTED, "false")
+            Log.i(TAG, "getMainPage: sync requested via settings flag")
+            syncGenrePosters()
+        }
+
         ensureLoggedIn()
         val sections = mutableListOf<HomePageList>()
 
@@ -415,6 +421,17 @@ open class SerienstreamProvider : MainAPI() {
             val slugs = genreNames.map { it.lowercase().replace(" ", "-") }
             Log.i(TAG, "Cover sync: ${genreNames.size} genres, slugs=${slugs.take(5)}...")
 
+            val allSeries = doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").flatMap { headingDiv ->
+                val ul = headingDiv.nextElementSibling()
+                if (ul == null || ul.tagName() != "ul") return@flatMap emptyList()
+                ul.select("li.series-item a").mapNotNull { a ->
+                    val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
+                    val name = a.text().trim()
+                    if (name.isEmpty()) null else Pair(name, href)
+                }
+            }
+            Log.i(TAG, "Cover sync: ${allSeries.size} total series in by=genre")
+
             val posterMaps = slugs.amap { slug ->
                 try {
                     val gDoc = app.get("$mainUrl/genre/$slug", headers = authHeaders()).document
@@ -432,6 +449,36 @@ open class SerienstreamProvider : MainAPI() {
             }
             val fullMap = mutableMapOf<String, String>()
             posterMaps.forEach { fullMap.putAll(it) }
+            Log.i(TAG, "Cover sync: ${fullMap.size} posters from genre pages")
+
+            val tmdbKey = getKey<String>(SETTING_TMDB_KEY) ?: ""
+            if (tmdbKey.isNotBlank()) {
+                var tmdbCount = 0
+                allSeries.forEach { (name, url) ->
+                    if (url !in fullMap) {
+                        try {
+                            val resp = app.get(
+                                "https://api.themoviedb.org/3/search/tv",
+                                params = mapOf("api_key" to tmdbKey, "query" to name, "language" to "de-DE")
+                            )
+                            val json = org.json.JSONObject(resp.text)
+                            json.optJSONArray("results")?.let { arr ->
+                                if (arr.length() > 0) {
+                                    arr.getJSONObject(0).optString("poster_path", "").takeIf { it.isNotBlank() }?.let {
+                                        fullMap[url] = "https://image.tmdb.org/t/p/w500$it"
+                                        tmdbCount++
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "TMDB search failed for '$name': ${e.message}")
+                        }
+                        kotlinx.coroutines.delay(200)
+                    }
+                }
+                Log.i(TAG, "Cover sync: $tmdbCount posters from TMDB")
+            }
+
             Log.i(TAG, "Cover sync: ${fullMap.size} posters total")
             if (fullMap.isEmpty()) {
                 Log.w(TAG, "Cover sync: empty result, NOT saving to allow retry")
@@ -466,6 +513,8 @@ open class SerienstreamProvider : MainAPI() {
         const val SETTING_EMAIL = "serienstream_email"
         const val SETTING_PASSWORD = "serienstream_password"
         const val SETTING_POSTER_MAP = "genre_poster_map"
+        const val SETTING_TMDB_KEY = "tmdb_api_key"
+        const val SETTING_SYNC_REQUESTED = "sync_requested"
         private const val TAG = "Serienstream"
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private val GENRE_NAMES = mapOf(
