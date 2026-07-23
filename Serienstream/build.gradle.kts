@@ -1,8 +1,8 @@
-version = 40
+version = 41
 
 cloudstream {
     language = "de"
-    description = "Serien online ansehen und streamen - SerienStream.to (v40)"
+    description = "Serien online ansehen und streamen - SerienStream.to (v41)"
     authors = listOf("Streamable")
 
     status = 1

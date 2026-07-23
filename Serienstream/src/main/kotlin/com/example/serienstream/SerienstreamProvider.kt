@@ -46,7 +46,9 @@ open class SerienstreamProvider : MainAPI() {
 
     private var isLoggedIn = false
     private var triedLogin = false
-    private var sessionCookies = ""
+    private var sessionCookies
+        get() = sharedSessionCookies
+        set(value) { sharedSessionCookies = value }
 
     private fun toast(msg: String) {
         try {
@@ -443,6 +445,15 @@ open class SerienstreamProvider : MainAPI() {
         private const val TAG = "Serienstream"
         private const val BASE_URL = "https://serienstream.to"
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+        @JvmStatic
+        private var sharedSessionCookies = ""
+
+        @JvmStatic
+        fun retrieveSessionCookies(): String = sharedSessionCookies
+
+        @JvmStatic
+        fun updateSessionCookies(cookies: String) { sharedSessionCookies = cookies }
         private val GENRE_NAMES = mapOf(
             "filter.genre_doku-soap" to "Dokusoap",
             "filter.genre_historie" to "History",

@@ -4,7 +4,6 @@ import android.content.Context
 import android.graphics.Color
 import android.widget.Button
 import android.widget.EditText
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
@@ -14,8 +13,6 @@ import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.extractors.Voe1
 import android.app.AlertDialog
 import android.widget.Toast
-import java.net.URL
-import java.net.URLEncoder
 
 @CloudstreamPlugin
 class SerienstreamPlugin : Plugin() {
@@ -76,47 +73,66 @@ class SerienstreamPlugin : Plugin() {
                         Toast.makeText(ctx, "Kein Captcha erforderlich", Toast.LENGTH_SHORT).show()
                         return@setOnClickListener
                     }
-                    Thread {
-                        try {
-                            val encoded = URLEncoder.encode(url, "UTF-8")
-                            val qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$encoded"
-                            val bitmap = android.graphics.BitmapFactory.decodeStream(URL(qrUrl).openStream())
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                val hint = TextView(ctx).apply {
-                                    text = "Scanne den QR-Code mit dem Smartphone oder öffne den Link im Browser. Löse dort das Captcha (Turnstile) und komme dann zurück."
-                                    setPadding(16, 8, 16, 8)
-                                    textSize = 14f
-                                }
-                                val imgView = ImageView(ctx).apply {
-                                    setImageBitmap(bitmap)
-                                    setPadding(16, 16, 16, 16)
-                                }
-                                val urlText = TextView(ctx).apply {
-                                    text = url
-                                    setPadding(16, 0, 16, 16)
-                                    setTextIsSelectable(true)
-                                }
-                                val innerLayout = LinearLayout(ctx).apply {
-                                    orientation = LinearLayout.VERTICAL
-                                    addView(hint)
-                                    addView(imgView)
-                                    addView(urlText)
-                                }
-                                AlertDialog.Builder(ctx)
-                                    .setTitle("Captcha lösen")
-                                    .setView(innerLayout)
-                                    .setPositiveButton("Erledigt") { _, _ ->
-                                        SerienstreamProvider.clearCaptchaUrl()
-                                        Toast.makeText(ctx, "Captcha-URL gelöscht – jetzt nochmal laden", Toast.LENGTH_LONG).show()
-                                    }
-                                    .show()
-                            }
-                        } catch (e: Exception) {
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                Toast.makeText(ctx, "Fehler: ${e.message}", Toast.LENGTH_LONG).show()
+
+                    val cookieManager = android.webkit.CookieManager.getInstance()
+                    cookieManager.setAcceptCookie(true)
+                    val cookies = SerienstreamProvider.retrieveSessionCookies()
+                    if (cookies.isNotEmpty()) {
+                        for (pair in cookies.split("; ")) {
+                            val eq = pair.indexOf('=')
+                            if (eq > 0) {
+                                val name = pair.substring(0, eq)
+                                val value = pair.substring(eq + 1)
+                                cookieManager.setCookie("https://serienstream.to", "$name=$value; Domain=.serienstream.to; Path=/")
                             }
                         }
-                    }.start()
+                        cookieManager.flush()
+                    }
+
+                    var webViewDestroyed = false
+                    val heightPx = (500 * ctx.resources.displayMetrics.density).toInt()
+                    val webView = android.webkit.WebView(ctx).apply {
+                        layoutParams = LinearLayout.LayoutParams(
+                            LinearLayout.LayoutParams.MATCH_PARENT,
+                            heightPx
+                        )
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                        settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    }
+                    webView.loadUrl(url)
+
+                    val dialog = AlertDialog.Builder(ctx)
+                        .setTitle("Captcha lösen (Turnstile)")
+                        .setView(webView)
+                        .setPositiveButton("Erledigt") { _, _ ->
+                            val updated = cookieManager.getCookie("https://serienstream.to")
+                            if (updated != null) {
+                                SerienstreamProvider.updateSessionCookies(updated)
+                            }
+                            SerienstreamProvider.clearCaptchaUrl()
+                            webViewDestroyed = true
+                            webView.destroy()
+                            Toast.makeText(ctx, "Captcha gelöst – jetzt nochmal laden", Toast.LENGTH_LONG).show()
+                        }
+                        .setNegativeButton("Abbrechen") { _, _ ->
+                            webViewDestroyed = true
+                            webView.destroy()
+                        }
+                        .create()
+
+                    dialog.setOnDismissListener {
+                        val updated = cookieManager.getCookie("https://serienstream.to")
+                        if (updated != null) {
+                            SerienstreamProvider.updateSessionCookies(updated)
+                        }
+                        if (!webViewDestroyed) {
+                            webView.destroy()
+                        }
+                    }
+
+                    dialog.show()
                 }
             }
 
