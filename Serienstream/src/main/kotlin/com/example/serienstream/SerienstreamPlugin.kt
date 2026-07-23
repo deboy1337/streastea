@@ -98,7 +98,6 @@ class SerienstreamPlugin : Plugin() {
                         cookieManager.flush()
                     }
 
-                    var captchaDone = false
                     var webViewDestroyed = false
 
                     val webView = WebView(ctx).apply {
@@ -111,48 +110,23 @@ class SerienstreamPlugin : Plugin() {
                         settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                         settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                         isFocusable = true
-                        requestFocus()
-                    }
-
-                    var cursorX = 0f
-                    var cursorY = 0f
-                    val STEP = 25f
-
-                    webView.post {
-                        cursorX = webView.width / 2f
-                        cursorY = webView.height / 2f
-                    }
-
-                    webView.setOnKeyListener { v, keyCode, event ->
-                        if (event.action == KeyEvent.ACTION_DOWN) {
-                            when (keyCode) {
-                                KeyEvent.KEYCODE_DPAD_UP -> cursorY = (cursorY - STEP).coerceAtLeast(0f)
-                                KeyEvent.KEYCODE_DPAD_DOWN -> cursorY = (cursorY + STEP).coerceAtMost(v.height.toFloat())
-                                KeyEvent.KEYCODE_DPAD_LEFT -> cursorX = (cursorX - STEP).coerceAtLeast(0f)
-                                KeyEvent.KEYCODE_DPAD_RIGHT -> cursorX = (cursorX + STEP).coerceAtMost(v.width.toFloat())
-                                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER -> {
-                                    val now = SystemClock.uptimeMillis()
-                                    val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, cursorX, cursorY, 0)
-                                    v.dispatchTouchEvent(down)
-                                    down.recycle()
-                                    val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, cursorX, cursorY, 0)
-                                    v.dispatchTouchEvent(up)
-                                    up.recycle()
-                                    return@setOnKeyListener true
-                                }
-                                else -> return@setOnKeyListener false
-                            }
-                            val js = "document.getElementById('__mc__').style.left = '${cursorX}px'; document.getElementById('__mc__').style.top = '${cursorY}px'"
-                            webView.evaluateJavascript(js, null)
-                            return@setOnKeyListener true
-                        }
-                        false
                     }
 
                     webView.addJavascriptInterface(object {
                         @JavascriptInterface
+                        fun onClick(x: Float, y: Float) {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                val now = SystemClock.uptimeMillis()
+                                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+                                webView.dispatchTouchEvent(down)
+                                down.recycle()
+                                val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, x, y, 0)
+                                webView.dispatchTouchEvent(up)
+                                up.recycle()
+                            }
+                        }
+                        @JavascriptInterface
                         fun onCaptchaSolved() {
-                            captchaDone = true
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 if (webViewDestroyed) return@post
                                 val scrapeJs = """
@@ -204,6 +178,25 @@ class SerienstreamPlugin : Plugin() {
                                         h.textContent = '\u25B2\u25BC\u25C0\u25B6 = Cursor | OK = Klicken | BACK = Zur\u00fcck';
                                         document.body.appendChild(h);
                                     }
+                                    var cx = window.innerWidth / 2, cy = window.innerHeight / 2;
+                                    function updatePos() {
+                                        var el = document.getElementById('__mc__');
+                                        if (el) { el.style.left = cx + 'px'; el.style.top = cy + 'px'; }
+                                    }
+                                    document.addEventListener('keydown', function(e) {
+                                        var kc = e.keyCode || e.which;
+                                        var handled = true;
+                                        switch(kc) {
+                                            case 19: case 38: cy = Math.max(0, cy - 25); break;
+                                            case 20: case 40: cy = Math.min(window.innerHeight, cy + 25); break;
+                                            case 21: case 37: cx = Math.max(0, cx - 25); break;
+                                            case 22: case 39: cx = Math.min(window.innerWidth, cx + 25); break;
+                                            case 23: case 13: case 32: Android.onClick(cx, cy); break;
+                                            case 4: break;
+                                            default: handled = false;
+                                        }
+                                        if (handled) { e.preventDefault(); e.stopPropagation(); updatePos(); }
+                                    }, true);
                                     var observer = new MutationObserver(function() {
                                         var gate = document.querySelector('[data-redirect-gate-tier]');
                                         if (!gate || gate.offsetParent === null || gate.style.display === 'none') {
@@ -217,6 +210,7 @@ class SerienstreamPlugin : Plugin() {
                                     } else {
                                         Android.onCaptchaSolved();
                                     }
+                                    updatePos();
                                 })();
                             """.trimIndent(), null)
                         }
@@ -225,12 +219,7 @@ class SerienstreamPlugin : Plugin() {
                     webView.loadUrl(url)
 
                     val dialog = AlertDialog.Builder(ctx)
-                        .setTitle("Captcha lösen (Turnstile)")
                         .setView(webView)
-                        .setNegativeButton("Abbrechen") { _, _ ->
-                            webViewDestroyed = true
-                            webView.destroy()
-                        }
                         .setCancelable(true)
                         .create()
 
