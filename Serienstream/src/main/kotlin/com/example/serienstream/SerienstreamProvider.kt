@@ -242,7 +242,9 @@ open class SerienstreamProvider : MainAPI() {
             }
 
             val posterMap = loadPosterMap()
+            Log.i(TAG, "getMainPage: ${posterMap.size} cached posters")
             if (posterMap.isEmpty()) {
+                Log.i(TAG, "getMainPage: no cached posters, background sync started")
                 Thread { runBlocking { syncGenrePosters() } }.start()
             }
 
@@ -411,6 +413,7 @@ open class SerienstreamProvider : MainAPI() {
                 }
             }.filter { it.isNotEmpty() }
             val slugs = genreNames.map { it.lowercase().replace(" ", "-") }
+            Log.i(TAG, "Cover sync: ${genreNames.size} genres, slugs=${slugs.take(5)}...")
 
             val posterMaps = slugs.amap { slug ->
                 try {
@@ -422,11 +425,20 @@ open class SerienstreamProvider : MainAPI() {
                             seriesUrl to posterUrl
                         }
                     }.toMap()
-                } catch (_: Exception) { emptyMap() }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Cover sync: genre/$slug failed: ${e.message}")
+                    emptyMap()
+                }
             }
             val fullMap = mutableMapOf<String, String>()
             posterMaps.forEach { fullMap.putAll(it) }
-            savePosterMap(fullMap)
+            Log.i(TAG, "Cover sync: ${fullMap.size} posters total")
+            if (fullMap.isEmpty()) {
+                Log.w(TAG, "Cover sync: empty result, NOT saving to allow retry")
+                setKey(SETTING_POSTER_MAP, "")
+            } else {
+                savePosterMap(fullMap)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Cover sync failed: ${e.message}")
         }
@@ -440,11 +452,13 @@ open class SerienstreamProvider : MainAPI() {
 
     private fun loadPosterMap(): Map<String, String> {
         val json = getKey<String>(SETTING_POSTER_MAP) ?: return emptyMap()
-        val obj = org.json.JSONObject(json)
+        if (json.isBlank() || json == "{}") return emptyMap()
+        val obj = try { org.json.JSONObject(json) } catch (_: Exception) { return emptyMap() }
         val map = mutableMapOf<String, String>()
         obj.keys().forEach { key ->
             obj.optString(key)?.let { map[key] = it }
         }
+        Log.i(TAG, "loadPosterMap: ${map.size} entries")
         return map
     }
 
