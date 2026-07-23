@@ -82,6 +82,11 @@ class SerienstreamPlugin : Plugin() {
                             val qrUrl = "https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$encoded"
                             val bitmap = android.graphics.BitmapFactory.decodeStream(URL(qrUrl).openStream())
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                val hint = TextView(ctx).apply {
+                                    text = "Scanne den QR-Code mit dem Smartphone oder öffne den Link im Browser. Löse dort das Captcha (Turnstile) und komme dann zurück."
+                                    setPadding(16, 8, 16, 8)
+                                    textSize = 14f
+                                }
                                 val imgView = ImageView(ctx).apply {
                                     setImageBitmap(bitmap)
                                     setPadding(16, 16, 16, 16)
@@ -93,6 +98,7 @@ class SerienstreamPlugin : Plugin() {
                                 }
                                 val innerLayout = LinearLayout(ctx).apply {
                                     orientation = LinearLayout.VERTICAL
+                                    addView(hint)
                                     addView(imgView)
                                     addView(urlText)
                                 }
@@ -101,7 +107,7 @@ class SerienstreamPlugin : Plugin() {
                                     .setView(innerLayout)
                                     .setPositiveButton("Erledigt") { _, _ ->
                                         SerienstreamProvider.clearCaptchaUrl()
-                                        Toast.makeText(ctx, "Captcha-URL gelöscht", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(ctx, "Captcha-URL gelöscht – jetzt nochmal laden", Toast.LENGTH_LONG).show()
                                     }
                                     .show()
                             }
