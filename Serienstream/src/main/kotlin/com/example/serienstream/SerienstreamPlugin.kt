@@ -1,6 +1,8 @@
 package com.example.serienstream
 
 import android.content.Context
+import android.graphics.Color
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -37,12 +39,44 @@ class SerienstreamPlugin : Plugin() {
                 setPadding(48, 32, 48, 8)
             }
 
+            val syncBtn = Button(ctx).apply {
+                text = "Covers sync"
+                setPadding(16, 8, 16, 8)
+                setOnClickListener {
+                    setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
+                    setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
+                    Thread {
+                        SerienstreamProvider.syncGenrePosters()
+                        android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(ctx, "Covers Sync abgeschlossen!", Toast.LENGTH_LONG).show()
+                        }
+                    }.start()
+                }
+            }
+
+            val clearBtn = Button(ctx).apply {
+                text = "Covers leeren"
+                setTextColor(Color.parseColor("#E53935"))
+                setPadding(16, 8, 16, 8)
+                setOnClickListener {
+                    SerienstreamProvider.clearCovers()
+                    Toast.makeText(ctx, "Covers gelöscht!", Toast.LENGTH_LONG).show()
+                }
+            }
+
+            val buttonRow = LinearLayout(ctx).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(syncBtn)
+                addView(clearBtn)
+            }
+
             val layout = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(48, 16, 48, 16)
                 addView(label)
                 addView(emailInput)
                 addView(passwordInput)
+                addView(buttonRow)
             }
 
             AlertDialog.Builder(ctx)
@@ -55,16 +89,6 @@ class SerienstreamPlugin : Plugin() {
                 .setNegativeButton("Logout") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, "")
                     setKey(SerienstreamProvider.SETTING_PASSWORD, "")
-                }
-                .setNeutralButton("Covers sync") { _, _ ->
-                    setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
-                    setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
-                    Thread {
-                        SerienstreamProvider.syncGenrePosters()
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(ctx, "Covers Sync abgeschlossen!", Toast.LENGTH_LONG).show()
-                        }
-                    }.start()
                 }
                 .show()
         }

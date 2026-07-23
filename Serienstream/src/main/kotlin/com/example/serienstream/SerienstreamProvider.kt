@@ -541,12 +541,12 @@ open class SerienstreamProvider : MainAPI() {
                                     break
                                 }
 
-                                cards.forEach { card ->
+                                for (card in cards) {
                                     val href = card.attr("href")
                                     val fullHref = if (href.startsWith("http")) href else "$BASE_URL$href"
-                                    if (fullHref in seenHrefs) return@forEach
+                                    if (fullHref in seenHrefs) continue
 
-                                    val img = card.selectFirst("img") ?: return@forEach
+                                    val img = card.selectFirst("img") ?: continue
                                     val poster = img.attr("data-src").ifEmpty { img.attr("src") }
                                     if (poster.isNotBlank()) {
                                         val fullPoster = if (poster.startsWith("http")) poster else "$BASE_URL$poster"
