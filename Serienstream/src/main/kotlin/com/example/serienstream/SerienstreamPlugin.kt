@@ -10,10 +10,7 @@ import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
 import com.lagradost.cloudstream3.extractors.Voe1
 import android.app.AlertDialog
-import android.os.Handler
-import android.os.Looper
 import android.widget.Toast
-import kotlinx.coroutines.runBlocking
 
 @CloudstreamPlugin
 class SerienstreamPlugin : Plugin() {
@@ -76,15 +73,14 @@ class SerienstreamPlugin : Plugin() {
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_TMDB_KEY, key)
                     Thread {
-                        runBlocking {
-                            val ok = SerienstreamProvider().testTmdbKey(key)
-                            Handler(Looper.getMainLooper()).post {
-                                if (ok) {
-                                    setKey(SerienstreamProvider.SETTING_SYNC_REQUESTED, "true")
-                                    Toast.makeText(ctx, "TMDB-Key gültig! Sync startet beim nächsten Laden", Toast.LENGTH_LONG).show()
-                                } else {
-                                    Toast.makeText(ctx, "TMDB-Key ungültig!", Toast.LENGTH_LONG).show()
-                                }
+                        if (SerienstreamProvider.testTmdbKey(key)) {
+                            SerienstreamProvider.syncGenrePosters()
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                Toast.makeText(ctx, "Covers Sync abgeschlossen!", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                Toast.makeText(ctx, "TMDB-Key ungültig!", Toast.LENGTH_LONG).show()
                             }
                         }
                     }.start()
