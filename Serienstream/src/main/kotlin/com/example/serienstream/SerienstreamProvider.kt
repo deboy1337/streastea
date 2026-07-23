@@ -203,7 +203,6 @@ open class SerienstreamProvider : MainAPI() {
 
         try {
             val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
-
             document.select(".popular-page > div").forEach { elem ->
                 val header = elem.selectFirst("div > h2")?.text()?.trim() ?: return@forEach
                 val items = elem.select("a.show-card").mapNotNull { it.toShowCardResult() }
@@ -211,7 +210,6 @@ open class SerienstreamProvider : MainAPI() {
                     sections.add(HomePageList(header, items))
                 }
             }
-
             if (sections.isEmpty()) {
                 val items = document.select("a.show-card").mapNotNull { it.toShowCardResult() }
                 if (items.isNotEmpty()) {
@@ -219,19 +217,15 @@ open class SerienstreamProvider : MainAPI() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load beliebte-serien: ${e.message}")
+            Log.e(TAG, "Failed: ${e.message}")
         }
 
         try {
             val genreDoc = app.get("$mainUrl/suche", params = mapOf("tab" to "genres"), headers = authHeaders()).document
-            val genreLinks = genreDoc.select("a[href*='/genre/']")
-                .distinctBy { it.attr("href") }
-
-            genreLinks.forEach { el ->
+            genreDoc.select("a[href*='/genre/']").distinctBy { it.attr("href") }.forEach { el ->
                 val href = fixUrlNull(el.attr("href")) ?: return@forEach
                 val genreName = el.text().trim()
                 if (genreName.isEmpty()) return@forEach
-
                 try {
                     val gDoc = app.get(href, headers = authHeaders()).document
                     val items = gDoc.select("a.show-card").mapNotNull { it.toShowCardResult() }
@@ -239,11 +233,11 @@ open class SerienstreamProvider : MainAPI() {
                         sections.add(HomePageList(genreName, items))
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load genre $genreName: ${e.message}")
+                    Log.e(TAG, "Failed genre $genreName: ${e.message}")
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to load genres: ${e.message}")
+            Log.e(TAG, "Failed genres: ${e.message}")
         }
 
         return newHomePageResponse(sections, hasNext = false)
@@ -318,18 +312,12 @@ open class SerienstreamProvider : MainAPI() {
     ): Boolean {
         ensureLoggedIn()
 
-        toast("Serienstream: Lade Streams...")
-
         val document = app.get(data, headers = authHeaders()).document
-        val title = document.selectFirst("h1")?.text() ?: "unbekannt"
 
         val buttons = document.select("button.link-box[data-play-url]")
         if (buttons.isEmpty()) {
-            toast("Serienstream: Keine Hoster fuer '$title'")
             return false
         }
-
-        toast("Serienstream: ${buttons.size} Hoster fuer '$title'")
 
         buttons.amap { button ->
             val playUrl = button.attr("data-play-url").trim()
@@ -369,8 +357,10 @@ open class SerienstreamProvider : MainAPI() {
     }
 
     private fun Element.toShowCardResult(): SearchResponse? {
-        val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
-        val imgEl = this.selectFirst("img") ?: return null
+        val href = fixUrlNull(
+            if (tagName() == "a") attr("href") else selectFirst("a")?.attr("href")
+        ) ?: return null
+        val imgEl = selectFirst("img") ?: return null
         val title = imgEl.attr("alt").ifEmpty { return null }
         val posterUrl = fixUrlNull(
             imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
