@@ -1,23 +1,7 @@
 package com.example.serienstream
 
-import android.app.AlertDialog
-import android.graphics.Color
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
-import android.view.ViewGroup
-import android.view.WindowManager
-import android.webkit.CookieManager
-import android.webkit.WebChromeClient
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import android.widget.LinearLayout
-import android.widget.ProgressBar
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
-import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
-import com.lagradost.cloudstream3.CommonActivity
 import com.lagradost.cloudstream3.HomePageList
 import com.lagradost.cloudstream3.HomePageResponse
 import com.lagradost.cloudstream3.LoadResponse
@@ -28,7 +12,6 @@ import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
-import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.amap
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.fixUrl
@@ -49,22 +32,63 @@ open class SerienstreamProvider : MainAPI() {
     override var lang = "de"
 
     private var isLoggedIn = false
+    private var triedLogin = false
 
     private suspend fun ensureLoggedIn() {
-        if (isLoggedIn) return
+        if (isLoggedIn || triedLogin) return
+        triedLogin = true
+
         val email = getKey<String>(SETTING_EMAIL)
         val password = getKey<String>(SETTING_PASSWORD)
-        if (email.isNullOrBlank() || password.isNullOrBlank()) return
+        if (email.isNullOrBlank() || password.isNullOrBlank()) {
+            Log.w(TAG, "No login credentials stored")
+            return
+        }
+
         try {
-            val loginPage = app.get("$mainUrl/login").document
-            val csrfToken = loginPage.selectFirst("input[name='_token']")?.attr("value") ?: return
+            val loginPage = app.get("$mainUrl/login")
+            val doc = loginPage.document
+            val csrfToken = doc.selectFirst("input[name='_token']")?.attr("value")
+
+            if (csrfToken == null) {
+                Log.e(TAG, "CSRF token not found on login page")
+                return
+            }
+
+            Log.d(TAG, "Attempting login with email: $email")
+
             val loginResp = app.post(
                 "$mainUrl/login",
-                data = mapOf("_token" to csrfToken, "email" to email, "password" to password),
-                headers = mapOf("Referer" to "$mainUrl/login")
+                data = mapOf(
+                    "_token" to csrfToken,
+                    "email" to email,
+                    "password" to password
+                ),
+                headers = mapOf(
+                    "Referer" to "$mainUrl/login",
+                    "Origin" to mainUrl,
+                    "Content-Type" to "application/x-www-form-urlencoded"
+                )
             )
-            isLoggedIn = !loginResp.url.contains("/login")
-        } catch (_: Exception) { }
+
+            val respDoc = loginResp.document
+            val hasError = respDoc.select(".alert-danger, .invalid-feedback, .error").isNotEmpty()
+            val stillOnLogin = loginResp.url.contains("/login")
+            val hasLogout = respDoc.select("a[href*='logout'], a[href*='profil'], .user-menu, .dropdown-menu").isNotEmpty()
+
+            if (stillOnLogin || hasError) {
+                Log.e(TAG, "Login failed - still on login page: $stillOnLogin, has error: $hasError")
+                val errorText = respDoc.select(".alert-danger, .invalid-feedback").text()
+                if (errorText.isNotEmpty()) {
+                    Log.e(TAG, "Login error message: $errorText")
+                }
+            } else {
+                isLoggedIn = true
+                Log.d(TAG, "Login successful! Final URL: ${loginResp.url}")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Login exception: ${e.message}", e)
+        }
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -141,18 +165,12 @@ open class SerienstreamProvider : MainAPI() {
 
         val document = app.get(data).document
         val buttons = document.select("button.link-box[data-play-url]")
-        if (buttons.isEmpty()) return false
-
-        val hasGate = document.select("#episode-redirect-gate-root").isNotEmpty()
-
-        if (hasGate) {
-            val activity = CommonActivity.activity
-            if (activity != null && !activity.isFinishing) {
-                showWebViewFullscreen(activity, data)
-                return true
-            }
+        if (buttons.isEmpty()) {
+            Log.w(TAG, "No hoster buttons found on $data")
             return false
         }
+
+        Log.d(TAG, "Found ${buttons.size} hoster buttons, logged in: $isLoggedIn")
 
         buttons.amap { button ->
             val playUrl = button.attr("data-play-url").trim()
@@ -160,102 +178,24 @@ open class SerienstreamProvider : MainAPI() {
             val language = button.attr("data-language-label")
             if (playUrl.isEmpty()) return@amap
 
+            Log.d(TAG, "Trying hoster: $source [$language] -> $playUrl")
+
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl)
+                Log.d(TAG, "Hoster redirect: $streamUrl -> ${resp.url}")
                 resp.url
-            } catch (e: Exception) { streamUrl }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to resolve hoster URL $streamUrl: ${e.message}")
+                streamUrl
+            }
 
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
+                Log.d(TAG, "Loaded stream from ${link.name}: ${link.url}")
                 callback.invoke(link)
             }
         }
         return true
-    }
-
-    private fun showWebViewFullscreen(
-        activity: android.app.Activity,
-        url: String
-    ) {
-        val mainHandler = Handler(Looper.getMainLooper())
-
-        mainHandler.post {
-            CookieManager.getInstance().apply {
-                setAcceptCookie(true)
-            }
-
-            val webView = WebView(activity).apply {
-                layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-
-                settings.apply {
-                    javaScriptEnabled = true
-                    domStorageEnabled = true
-                    databaseEnabled = true
-                    allowFileAccess = true
-                    allowContentAccess = true
-                    useWideViewPort = true
-                    loadWithOverviewMode = true
-                    setSupportZoom(true)
-                    builtInZoomControls = true
-                    displayZoomControls = false
-                    mediaPlaybackRequiresUserGesture = false
-                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    cacheMode = WebSettings.LOAD_DEFAULT
-                    setSupportMultipleWindows(false)
-                    javaScriptCanOpenWindowsAutomatically = true
-                }
-
-                webViewClient = object : WebViewClient() {
-                    override fun shouldOverrideUrlLoading(
-                        view: WebView?,
-                        request: WebResourceRequest?
-                    ): Boolean {
-                        return false
-                    }
-
-                    override fun onReceivedError(
-                        view: WebView?,
-                        errorCode: Int,
-                        description: String?,
-                        failingUrl: String?
-                    ) {
-                        Log.e(TAG, "WebView error: $errorCode $description $failingUrl")
-                    }
-                }
-
-                webChromeClient = WebChromeClient()
-            }
-
-            webView.loadUrl(url)
-
-            val dialog = AlertDialog.Builder(
-                activity,
-                android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen
-            )
-                .setView(webView)
-                .setNegativeButton("Schliessen") { d, _ ->
-                    d.dismiss()
-                    webView.destroy()
-                }
-                .create()
-
-            dialog.window?.let { window ->
-                window.setFlags(
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                    WindowManager.LayoutParams.FLAG_FULLSCREEN
-                )
-            }
-
-            dialog.setOnDismissListener {
-                webView.destroy()
-            }
-
-            dialog.show()
-        }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
