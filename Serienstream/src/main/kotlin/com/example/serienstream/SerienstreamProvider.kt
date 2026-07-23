@@ -347,6 +347,11 @@ open class SerienstreamProvider : MainAPI() {
 
         val gate = document.selectFirst("[data-redirect-gate-tier]")
 
+        if (gate != null) {
+            setKey(SETTING_CAPTCHA_URL, data)
+            Log.w(TAG, "Gate detected, saved captcha URL")
+        }
+
         val buttons = document.select("button.link-box[data-play-url]").sortedBy { button ->
             when (button.attr("data-language-label").trim()) {
                 "Deutsch" -> 0
@@ -378,8 +383,7 @@ open class SerienstreamProvider : MainAPI() {
 
         if (gate != null) {
             val tier = gate.attr("data-redirect-gate-tier")
-            Log.w(TAG, "⚠️ Gate detected ($tier), no hosters found")
-            setKey(SETTING_CAPTCHA_URL, data)
+            Log.w(TAG, "⚠️ Gate detected ($tier), still no hosters")
             toast("Serienstream: Captcha nötig - Einstellungen > Captcha lösen")
             return false
         }
