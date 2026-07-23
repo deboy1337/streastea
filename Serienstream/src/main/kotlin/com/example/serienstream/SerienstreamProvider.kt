@@ -48,6 +48,7 @@ open class SerienstreamProvider : MainAPI() {
 
     private var isLoggedIn = false
     private var triedLogin = false
+    private var sessionCookies = ""
 
     private fun toast(msg: String) {
         try {
@@ -188,8 +189,11 @@ open class SerienstreamProvider : MainAPI() {
 
                 if (verifyHtml.contains("Willkommen") || verifyHtml.contains("logout")) {
                     isLoggedIn = true
+                    // Save session cookies for use with nicehttp
+                    val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
+                    sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
+                    Log.d(TAG, "Login successful! Cookies: ${sessionCookies.take(200)}...")
                     toast("Serienstream: Login erfolgreich!")
-                    Log.d(TAG, "Login successful!")
                 } else {
                     Log.e(TAG, "Login verification failed. HTML snippet: ${verifyHtml.take(500)}")
                     toast("Serienstream: Login fehlgeschlagen")
@@ -216,21 +220,29 @@ open class SerienstreamProvider : MainAPI() {
         }
     }
 
+    private fun authHeaders(): Map<String, String> {
+        val h = mutableMapOf("User-Agent" to DESKTOP_UA)
+        if (sessionCookies.isNotEmpty()) {
+            h["Cookie"] = sessionCookies
+        }
+        return h
+    }
+
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/beliebte-serien", headers = mapOf("User-Agent" to DESKTOP_UA)).document
+        val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
         val items = document.select("a.show-card").mapNotNull { it.toSearchResult() }
         return newHomePageResponse(listOf(HomePageList("Beliebte Serien", items)), hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/search", params = mapOf("q" to query), headers = mapOf("User-Agent" to DESKTOP_UA)).document
+        val document = app.get("$mainUrl/search", params = mapOf("q" to query), headers = authHeaders()).document
         return document.select("a.show-card").mapNotNull { it.toSearchResult() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
-        val document = app.get(url, headers = mapOf("User-Agent" to DESKTOP_UA)).document
+        val document = app.get(url, headers = authHeaders()).document
         val title = document.selectFirst("h1")?.text()
             ?: throw Error("Titel konnte nicht gefunden werden")
         val poster = fixUrlNull(
@@ -247,7 +259,7 @@ open class SerienstreamProvider : MainAPI() {
         val episodes = seasons.flatMap { seasonLink ->
             val seasonNum = seasonLink.text().trim().toIntOrNull() ?: return@flatMap emptyList()
             val seasonUrl = fixUrl(seasonLink.attr("href"))
-            val seasonDoc = app.get(seasonUrl, headers = mapOf("User-Agent" to DESKTOP_UA)).document
+            val seasonDoc = app.get(seasonUrl, headers = authHeaders()).document
             seasonDoc.select("tr.episode-row").mapNotNull { row ->
                 val episodeNum = row.selectFirst(".episode-number-cell")
                     ?.text()?.trim()?.toIntOrNull()
@@ -290,7 +302,7 @@ open class SerienstreamProvider : MainAPI() {
 
         toast("Serienstream: Lade Streams...")
 
-        val document = app.get(data, headers = mapOf("User-Agent" to DESKTOP_UA)).document
+        val document = app.get(data, headers = authHeaders()).document
         val pageHtml = document.html()
         val title = document.selectFirst("h1")?.text() ?: "unbekannt"
 
@@ -317,7 +329,7 @@ open class SerienstreamProvider : MainAPI() {
 
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
-                val resp = app.get(streamUrl, headers = mapOf("User-Agent" to DESKTOP_UA))
+                val resp = app.get(streamUrl, headers = authHeaders())
                 Log.d(TAG, "Redirect: $streamUrl -> ${resp.url}")
                 resp.url
             } catch (e: Exception) {
