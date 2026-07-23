@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.LoadResponse.Companion.addTrailer
 import com.lagradost.cloudstream3.MainAPI
 import com.lagradost.cloudstream3.MainPageRequest
 import com.lagradost.cloudstream3.SearchResponse
+
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.TvType
 import com.lagradost.cloudstream3.amap
@@ -32,12 +33,7 @@ import okhttp3.CookieJar
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Element
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 open class SerienstreamProvider : MainAPI() {
     override var mainUrl = "https://serienstream.to"
@@ -106,7 +102,6 @@ open class SerienstreamProvider : MainAPI() {
         val client = createCookieClient()
 
         try {
-            // Step 1: GET login page to get CSRF token + DdosGuard cookies
             val loginPageRequest = Request.Builder()
                 .url("$mainUrl/login")
                 .header("User-Agent", DESKTOP_UA)
@@ -116,7 +111,6 @@ open class SerienstreamProvider : MainAPI() {
             val loginPageResponse = client.newCall(loginPageRequest).execute()
             val loginPageHtml = loginPageResponse.body?.string() ?: ""
 
-            // Extract CSRF token from meta tag or hidden input
             val csrfToken = Regex("""name="_token"\s+value="([^"]+)""").find(loginPageHtml)
                 ?.groupValues?.get(1)
                 ?: Regex("""content="([^"]+)"\s*""").find(
@@ -129,13 +123,8 @@ open class SerienstreamProvider : MainAPI() {
                 return
             }
 
-            // Log cookies from login page
-            val cookiesAfterGet = client.cookieJar.loadForRequest("$mainUrl/login".toHttpUrl())
-            Log.d(TAG, "Cookies after GET /login: ${cookiesAfterGet.map { "${it.name}=${it.value.take(20)}..." }}")
-
             toast("Serienstream: Login wird versucht...")
 
-            // Step 2: POST login
             val formBody = FormBody.Builder()
                 .add("_token", csrfToken)
                 .add("email", email)
@@ -155,23 +144,12 @@ open class SerienstreamProvider : MainAPI() {
 
             val postResponse = client.newCall(postRequest).execute()
             val postCode = postResponse.code
-            val postUrl = postResponse.request.url.toString()
-            val postRedirectUrl = postResponse.header("Location")
 
-            Log.d(TAG, "POST /login response: code=$postCode, url=$postUrl, redirect=$postRedirectUrl")
-
-            val cookiesAfterPost = client.cookieJar.loadForRequest("$mainUrl/login".toHttpUrl())
-            Log.d(TAG, "Cookies after POST: ${cookiesAfterPost.map { "${it.name}=${it.value.take(20)}..." }}")
-
-            // Handle redirect manually if 302
             if (postCode == 302 || postCode == 301) {
                 val redirectLocation = postResponse.header("Location") ?: ""
                 val fullRedirectUrl = if (redirectLocation.startsWith("http")) redirectLocation
                     else "$mainUrl$redirectLocation"
 
-                Log.d(TAG, "Following redirect to: $fullRedirectUrl")
-
-                // Step 3: Follow redirect to verify login
                 val verifyRequest = Request.Builder()
                     .url(fullRedirectUrl)
                     .header("User-Agent", DESKTOP_UA)
@@ -180,38 +158,28 @@ open class SerienstreamProvider : MainAPI() {
 
                 val verifyResponse = client.newCall(verifyRequest).execute()
                 val verifyHtml = verifyResponse.body?.string() ?: ""
-                val verifyUrl = verifyResponse.request.url.toString()
-
-                Log.d(TAG, "Verify URL: $verifyUrl")
-                Log.d(TAG, "Has 'Willkommen': ${verifyHtml.contains("Willkommen")}")
-                Log.d(TAG, "Has 'logout': ${verifyHtml.contains("logout")}")
-                Log.d(TAG, "Has 'Anmelden': ${verifyHtml.contains(">Anmelden<")}")
 
                 if (verifyHtml.contains("Willkommen") || verifyHtml.contains("logout")) {
                     isLoggedIn = true
-                    // Save session cookies for use with nicehttp
                     val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
                     sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
-                    Log.d(TAG, "Login successful! Cookies: ${sessionCookies.take(200)}...")
                     toast("Serienstream: Login erfolgreich!")
                 } else {
-                    Log.e(TAG, "Login verification failed. HTML snippet: ${verifyHtml.take(500)}")
                     toast("Serienstream: Login fehlgeschlagen")
                 }
             } else if (postCode == 200) {
-                // Check if we're still on login page
                 val bodyHtml = postResponse.body?.string() ?: ""
                 if (bodyHtml.contains("Anmelden") && bodyHtml.contains("_token")) {
-                    Log.e(TAG, "Login failed - still on login page")
                     val errorMsg = Regex("""class="alert-danger[^"]*"[^>]*>([^<]+)""").find(bodyHtml)
                         ?.groupValues?.get(1)?.trim() ?: "Falsche Zugangsdaten?"
                     toast("Serienstream: Login fehlgeschlagen: $errorMsg")
                 } else {
                     isLoggedIn = true
+                    val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
+                    sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
                     toast("Serienstream: Login erfolgreich!")
                 }
             } else {
-                Log.e(TAG, "Unexpected response code: $postCode")
                 toast("Serienstream: Login Fehler (HTTP $postCode)")
             }
         } catch (e: Exception) {
@@ -230,15 +198,112 @@ open class SerienstreamProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
-        val items = document.select("a.show-card").mapNotNull { it.toSearchResult() }
-        return newHomePageResponse(listOf(HomePageList("Beliebte Serien", items)), hasNext = false)
+        val sections = mutableListOf<HomePageList>()
+
+        // Section 1: Beliebte Serien
+        try {
+            val doc = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
+            val items = doc.select("a.show-card").mapNotNull { it.toShowCardResult() }
+            if (items.isNotEmpty()) {
+                sections.add(HomePageList("Beliebte Serien", items))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load beliebte-serien: ${e.message}")
+        }
+
+        // Section 2: Neue Episoden
+        try {
+            val doc = app.get("$mainUrl/neue-episoden", headers = authHeaders()).document
+            val rows = doc.select("table.new-episodes-table tbody tr")
+            val epItems = rows.mapNotNull { row ->
+                val linkEl = row.selectFirst("a[href*='/serie/']") ?: return@mapNotNull null
+                val href = fixUrlNull(linkEl.attr("href")) ?: return@mapNotNull null
+                val title = linkEl.text().trim()
+                val seasonBadge = row.select("span.badge.bg-secondary").firstOrNull()?.text()?.trim() ?: ""
+                val episodeBadge = row.select("span.badge.bg-secondary").getOrNull(1)?.text()?.trim() ?: ""
+                val langSvg = row.selectFirst("svg.watch-language")
+                val langTitle = langSvg?.attr("title") ?: ""
+                val langEmoji = if (langTitle.contains("Deutsch")) "[DE]" else if (langTitle.contains("Englisch")) "[EN]" else ""
+
+                newTvSeriesSearchResponse(
+                    "$langEmoji $title - $seasonBadge $episodeBadge".trim(),
+                    href,
+                    TvType.TvSeries
+                ) {
+                    this.posterUrl = null
+                }
+            }
+            if (epItems.isNotEmpty()) {
+                sections.add(HomePageList("Neue Episoden", epItems))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load neue-episoden: ${e.message}")
+        }
+
+        // Section 3: Genres
+        try {
+            val doc = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
+            val genreLinks = doc.select("a[href*='/genre/']")
+            val genreItems = genreLinks.mapNotNull { el ->
+                val href = fixUrlNull(el.attr("href")) ?: return@mapNotNull null
+                val genreName = el.select(".h5, .fw-bold").lastOrNull()?.text()?.trim()
+                    ?: el.text().trim()
+                if (genreName.isEmpty()) return@mapNotNull null
+                newTvSeriesSearchResponse(genreName, href, TvType.TvSeries) {
+                    this.posterUrl = null
+                }
+            }
+            if (genreItems.isNotEmpty()) {
+                sections.add(HomePageList("Genres", genreItems))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load genres: ${e.message}")
+        }
+
+        // Section 4: Alphabetisch
+        try {
+            val alphabetItems = ('A'..'Z').map { letter ->
+                newTvSeriesSearchResponse(letter.toString(), "$mainUrl/katalog/$letter", TvType.TvSeries) {
+                    this.posterUrl = null
+                }
+            } + newTvSeriesSearchResponse("0-9", "$mainUrl/katalog/0-9", TvType.TvSeries) {
+                this.posterUrl = null
+            }
+            sections.add(HomePageList("A-Z", alphabetItems))
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to build alphabet: ${e.message}")
+        }
+
+        return newHomePageResponse(sections, hasNext = false)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureLoggedIn()
-        val document = app.get("$mainUrl/search", params = mapOf("q" to query), headers = authHeaders()).document
-        return document.select("a.show-card").mapNotNull { it.toSearchResult() }
+        val document = app.get("$mainUrl/suche", params = mapOf("term" to query), headers = authHeaders()).document
+        val items = mutableListOf<SearchResponse>()
+
+        // Search for shows in the results-group[data-group="shows"] or cover-card elements
+        document.select("a[href*='/serie/']").forEach { link ->
+            val href = fixUrlNull(link.attr("href")) ?: return@forEach
+            // Skip FAQ/episode links
+            if (href.contains("/faqs/") || href.count { it == '/' } > 3) return@forEach
+            val imgEl = link.selectFirst("img") ?: return@forEach
+            val title = imgEl.attr("alt").ifEmpty {
+                link.selectFirst(".show-title, .card-body h6")?.text() ?: return@forEach
+            }
+            val posterUrl = fixUrlNull(
+                imgEl.attr("srcset").substringAfter(" ").substringBefore(" ").ifEmpty {
+                    imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
+                }
+            )
+            // Deduplicate by href
+            if (items.any { it.url == href }) return@forEach
+            items.add(newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
+                this.posterUrl = posterUrl
+            })
+        }
+
+        return items
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -303,26 +368,20 @@ open class SerienstreamProvider : MainAPI() {
         toast("Serienstream: Lade Streams...")
 
         val document = app.get(data, headers = authHeaders()).document
-        val pageHtml = document.html()
         val title = document.selectFirst("h1")?.text() ?: "unbekannt"
-
-        Log.d(TAG, "Episode: $title")
-        Log.d(TAG, "Has play buttons: ${pageHtml.contains("data-play-url")}")
 
         val buttons = document.select("button.link-box[data-play-url]")
         if (buttons.isEmpty()) {
-            Log.w(TAG, "No hoster buttons. Body: ${document.body()?.html()?.take(1500)}")
             toast("Serienstream: Keine Hoster fuer '$title'")
             return false
         }
 
-        Log.d(TAG, "Found ${buttons.size} hosters, logged in: $isLoggedIn")
         toast("Serienstream: ${buttons.size} Hoster fuer '$title'")
 
         buttons.amap { button ->
             val playUrl = button.attr("data-play-url").trim()
             val source = button.attr("data-provider-name")
-            val language = button.attr("data-language-label")
+            val language = button.attr("data-language-label").trim()
             if (playUrl.isEmpty()) return@amap
 
             Log.d(TAG, "Hoster: $source [$language] -> $playUrl")
@@ -330,7 +389,6 @@ open class SerienstreamProvider : MainAPI() {
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
                 val resp = app.get(streamUrl, headers = authHeaders())
-                Log.d(TAG, "Redirect: $streamUrl -> ${resp.url}")
                 resp.url
             } catch (e: Exception) {
                 Log.e(TAG, "Failed: $streamUrl: ${e.message}")
@@ -338,19 +396,20 @@ open class SerienstreamProvider : MainAPI() {
             }
 
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
-                Log.d(TAG, "Stream: ${link.name} q=${link.quality}")
                 callback.invoke(link)
             }
         }
         return true
     }
 
-    private fun Element.toSearchResult(): SearchResponse? {
+    private fun Element.toShowCardResult(): SearchResponse? {
         val href = fixUrlNull(this.attr("href")) ?: return null
         val imgEl = this.selectFirst("img") ?: return null
-        val title = imgEl.attr("alt") ?: return null
+        val title = imgEl.attr("alt").ifEmpty { return null }
         val posterUrl = fixUrlNull(
-            imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
+            imgEl.attr("srcset").substringAfter(" ").substringBefore(" ").ifEmpty {
+                imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
+            }
         )
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
