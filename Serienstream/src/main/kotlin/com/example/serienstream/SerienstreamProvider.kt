@@ -1,19 +1,20 @@
 package com.example.serienstream
 
 import android.app.AlertDialog
-import android.graphics.Bitmap
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
-import android.webkit.JavascriptInterface
+import android.view.WindowManager
+import android.webkit.CookieManager
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.TextView
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey
 import com.lagradost.cloudstream3.CommonActivity
@@ -38,10 +39,6 @@ import com.lagradost.cloudstream3.newTvSeriesLoadResponse
 import com.lagradost.cloudstream3.newTvSeriesSearchResponse
 import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.newExtractorLink
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.runBlocking
 import org.jsoup.nodes.Element
 
 open class SerienstreamProvider : MainAPI() {
@@ -149,11 +146,9 @@ open class SerienstreamProvider : MainAPI() {
         val hasGate = document.select("#episode-redirect-gate-root").isNotEmpty()
 
         if (hasGate) {
-            val embedUrl = showWebViewDialog(data)
-            if (embedUrl != null) {
-                loadExtractor(embedUrl, data, subtitleCallback) { link ->
-                    callback.invoke(link)
-                }
+            val activity = CommonActivity.activity
+            if (activity != null && !activity.isFinishing) {
+                showWebViewFullscreen(activity, data)
                 return true
             }
             return false
@@ -172,132 +167,95 @@ open class SerienstreamProvider : MainAPI() {
             } catch (e: Exception) { streamUrl }
 
             loadExtractor(finalUrl, data, subtitleCallback) { link ->
-                val fixedLink = runBlocking {
-                    newExtractorLink(
-                        source = source,
-                        name = "$source [$language]",
-                        url = link.url
-                    ) {
-                        referer = link.referer
-                        quality = link.quality
-                        type = link.type
-                        headers = link.headers
-                        extractorData = link.extractorData
-                    }
-                }
-                callback.invoke(fixedLink)
+                callback.invoke(link)
             }
         }
         return true
     }
 
-    private suspend fun showWebViewDialog(episodeUrl: String): String? {
-        val result = CompletableDeferred<String?>()
+    private fun showWebViewFullscreen(
+        activity: android.app.Activity,
+        url: String
+    ) {
         val mainHandler = Handler(Looper.getMainLooper())
 
         mainHandler.post {
-            val activity = CommonActivity.activity
-            if (activity == null || activity.isFinishing) {
-                result.complete(null)
-                return@post
-            }
-
-            val capturedUrl = StringBuilder()
-
-            val progress_bar = ProgressBar(activity).apply {
-                max = 100
+            CookieManager.getInstance().apply {
+                setAcceptCookie(true)
             }
 
             val webView = WebView(activity).apply {
                 layoutParams = LinearLayout.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
                 )
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.userAgentString = USER_AGENT
-                settings.mediaPlaybackRequiresUserGesture = false
 
-                addJavascriptInterface(object : Any() {
-                    @JavascriptInterface
-                    fun onUrl(url: String) {
-                        synchronized(capturedUrl) {
-                            if (capturedUrl.isEmpty()) {
-                                capturedUrl.append(url)
-                                result.complete(url)
-                            }
-                        }
-                    }
-                }, "CSBridge")
+                settings.apply {
+                    javaScriptEnabled = true
+                    domStorageEnabled = true
+                    databaseEnabled = true
+                    allowFileAccess = true
+                    allowContentAccess = true
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    setSupportZoom(true)
+                    builtInZoomControls = true
+                    displayZoomControls = false
+                    mediaPlaybackRequiresUserGesture = false
+                    userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    cacheMode = WebSettings.LOAD_DEFAULT
+                    setSupportMultipleWindows(false)
+                    javaScriptCanOpenWindowsAutomatically = true
+                }
 
                 webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        view?.evaluateJavascript(
-                            """
-                            (function() {
-                                var iframe = document.getElementById('player-iframe');
-                                if (!iframe) return;
-                                function check() {
-                                    var src = iframe.src || '';
-                                    if (src && src !== '' && !src.includes('/r?t=') && !src.includes('/r?t%3D')) {
-                                        CSBridge.onUrl(src);
-                                    }
-                                }
-                                check();
-                                new MutationObserver(check).observe(iframe, {attributes:true, attributeFilter:['src']});
-                                setInterval(check, 1000);
-                            })();
-                            """.trimIndent(), null
-                        )
+                    override fun shouldOverrideUrlLoading(
+                        view: WebView?,
+                        request: WebResourceRequest?
+                    ): Boolean {
+                        return false
+                    }
+
+                    override fun onReceivedError(
+                        view: WebView?,
+                        errorCode: Int,
+                        description: String?,
+                        failingUrl: String?
+                    ) {
+                        Log.e(TAG, "WebView error: $errorCode $description $failingUrl")
                     }
                 }
 
-                webChromeClient = object : WebChromeClient() {
-                    override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                        progress_bar.progress = newProgress
-                    }
-                }
+                webChromeClient = WebChromeClient()
             }
 
-            val header = TextView(activity).apply {
-                text = "Loese das Captcha auf der Seite, dann druecke Zurueck"
-                setTextColor(Color.WHITE)
-                setPadding(32, 24, 32, 8)
-            }
+            webView.loadUrl(url)
 
-            val container = LinearLayout(activity).apply {
-                orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.parseColor("#161e29"))
-                addView(header)
-                addView(progress_bar)
-                addView(webView)
-            }
-
-            val dialog = AlertDialog.Builder(activity, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen)
-                .setView(container)
-                .setNegativeButton("Abbrechen") { d, _ ->
+            val dialog = AlertDialog.Builder(
+                activity,
+                android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen
+            )
+                .setView(webView)
+                .setNegativeButton("Schliessen") { d, _ ->
                     d.dismiss()
                     webView.destroy()
-                    if (!result.isCompleted) result.complete(null)
                 }
                 .create()
 
-            dialog.setOnDismissListener {
-                webView.destroy()
-                if (!result.isCompleted) result.complete(null)
+            dialog.window?.let { window ->
+                window.setFlags(
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                    WindowManager.LayoutParams.FLAG_FULLSCREEN
+                )
             }
 
-            webView.loadUrl(episodeUrl)
+            dialog.setOnDismissListener {
+                webView.destroy()
+            }
+
             dialog.show()
         }
-
-        val deadline = System.currentTimeMillis() + 180_000L
-        while (!result.isCompleted && System.currentTimeMillis() < deadline) {
-            delay(500)
-        }
-        if (!result.isCompleted) result.complete(null)
-
-        return try { result.await() } catch (_: Exception) { null }
     }
 
     private fun Element.toSearchResult(): SearchResponse? {
