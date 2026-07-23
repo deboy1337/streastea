@@ -2,22 +2,18 @@
   {
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
     "status": 1,
-    "version": 14,
+    "version": 15,
     "name": "Serienstream",
     "internalName": "Serienstream",
-    "authors": [
-      "deboy1337"
-    ],
-    "description": "Serienstream.to Provider (v14)",
-    "fileSize": 31088,
+    "authors": ["deboy1337"],
+    "description": "Serienstream.to Provider (v15) All 28 genres",
+    "fileSize": 31035,
     "repositoryUrl": "https://github.com/deboy1337/streastea",
     "language": "de",
-    "tvTypes": [
-      "TvSeries"
-    ],
+    "tvTypes": ["TvSeries"],
     "iconUrl": "https://www.google.com/s2/favicons?domain=serienstream.to&sz=%size%",
     "apiVersion": 1,
-    "fileHash": "sha256-be04e89c7433c90fd8925a8a1ae7b5ae96c206d59447c201cc16e7d10103ebf2",
-    "hash": "be04e89c7433c90fd8925a8a1ae7b5ae96c206d59447c201cc16e7d10103ebf2"
+    "fileHash": "sha256-c4b66f7f550c16c3b0691db27681481f3b9c2e354e36624f6ee2d911ce0cac1a",
+    "hash": "c4b66f7f550c16c3b0691db27681481f3b9c2e354e36624f6ee2d911ce0cac1a"
   }
 ]
