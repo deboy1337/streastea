@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
+import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewGroup
@@ -117,10 +118,14 @@ class SerienstreamPlugin : Plugin() {
                         fun onClick(x: Float, y: Float) {
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 val now = SystemClock.uptimeMillis()
-                                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+                                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0).apply {
+                                    source = InputDevice.SOURCE_TOUCHSCREEN
+                                }
                                 webView.dispatchTouchEvent(down)
                                 down.recycle()
-                                val up = MotionEvent.obtain(now, now + 50, MotionEvent.ACTION_UP, x, y, 0)
+                                val up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, x, y, 0).apply {
+                                    source = InputDevice.SOURCE_TOUCHSCREEN
+                                }
                                 webView.dispatchTouchEvent(up)
                                 up.recycle()
                             }
@@ -191,7 +196,11 @@ class SerienstreamPlugin : Plugin() {
                                             case 20: case 40: cy = Math.min(window.innerHeight, cy + 25); break;
                                             case 21: case 37: cx = Math.max(0, cx - 25); break;
                                             case 22: case 39: cx = Math.min(window.innerWidth, cx + 25); break;
-                                            case 23: case 13: case 32: Android.onClick(cx, cy); break;
+                                            case 23: case 13: case 32:
+                                                Android.onClick(cx, cy);
+                                                var el = document.elementFromPoint(cx, cy);
+                                                if (el) { el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy})); }
+                                                break;
                                             case 4: break;
                                             default: handled = false;
                                         }
