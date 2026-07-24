@@ -168,44 +168,75 @@ class SerienstreamPlugin : Plugin() {
                         override fun onPageFinished(view: WebView, url: String) {
                             view.evaluateJavascript("""
                                 (function(){
-                                    var c = document.getElementById('__mc__');
-                                    if (!c) {
-                                        c = document.createElement('div');
-                                        c.id = '__mc__';
-                                        c.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;width:20px;height:20px;border:2px solid #ff4444;border-radius:50%;background:rgba(255,68,68,0.3);transform:translate(-50%,-50%);left:50%;top:50%';
-                                        document.body.appendChild(c);
-                                    }
-                                    var h = document.getElementById('__mc_hint__');
-                                    if (!h) {
-                                        h = document.createElement('div');
-                                        h.id = '__mc_hint__';
-                                        h.style.cssText = 'position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,0.8);color:#fff;padding:8px 16px;border-radius:8px;font-size:14px;text-align:center;pointer-events:none;font-family:sans-serif';
-                                        h.textContent = '\u25B2\u25BC\u25C0\u25B6 = Cursor | OK = Klicken | BACK = Zur\u00fcck';
-                                        document.body.appendChild(h);
-                                    }
+                                    var c = document.createElement('div');
+                                    c.id = '__mc__';
+                                    c.style.cssText = 'position:fixed;z-index:99999;pointer-events:none;width:20px;height:20px;border:2px solid #ff4444;border-radius:50%;background:rgba(255,68,68,0.3);transform:translate(-50%,-50%);left:50%;top:50%';
+                                    document.body.appendChild(c);
+                                    var h = document.createElement('div');
+                                    h.id = '__mc_hint__';
+                                    h.style.cssText = 'position:fixed;bottom:10px;left:50%;transform:translateX(-50%);z-index:99999;background:rgba(0,0,0,0.8);color:#fff;padding:8px 16px;border-radius:8px;font-size:14px;text-align:center;pointer-events:none;font-family:sans-serif';
+                                    h.textContent = '\u25B2\u25BC\u25C0\u25B6 = Cursor | OK = Klicken | BACK = Zur\u00fcck';
+                                    document.body.appendChild(h);
                                     var cx = window.innerWidth / 2, cy = window.innerHeight / 2;
-                                    function updatePos() {
-                                        var el = document.getElementById('__mc__');
-                                        if (el) { el.style.left = cx + 'px'; el.style.top = cy + 'px'; }
+                                    function updateC() {
+                                        var e = document.getElementById('__mc__');
+                                        if (e) { e.style.left = cx + 'px'; e.style.top = cy + 'px'; }
                                     }
                                     document.addEventListener('keydown', function(e) {
-                                        var kc = e.keyCode || e.which;
-                                        var handled = true;
-                                        switch(kc) {
+                                        var k = e.keyCode || e.which, h2 = true;
+                                        switch(k) {
                                             case 19: case 38: cy = Math.max(0, cy - 25); break;
                                             case 20: case 40: cy = Math.min(window.innerHeight, cy + 25); break;
                                             case 21: case 37: cx = Math.max(0, cx - 25); break;
                                             case 22: case 39: cx = Math.min(window.innerWidth, cx + 25); break;
                                             case 23: case 13: case 32:
-                                                Android.onClick(cx, cy);
-                                                var el = document.elementFromPoint(cx, cy);
-                                                if (el) { el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy})); }
+                                                clickTurnstile();
                                                 break;
                                             case 4: break;
-                                            default: handled = false;
+                                            default: h2 = false;
                                         }
-                                        if (handled) { e.preventDefault(); e.stopPropagation(); updatePos(); }
+                                        if (h2) { e.preventDefault(); e.stopPropagation(); updateC(); }
                                     }, true);
+                                    function clickTurnstile() {
+                                        var frames = document.querySelectorAll('iframe');
+                                        var ts = null;
+                                        for (var i = 0; i < frames.length; i++) {
+                                            if (frames[i].src && frames[i].src.indexOf('challenges.cloudflare.com') > -1) {
+                                                ts = frames[i]; break;
+                                            }
+                                        }
+                                        if (ts) {
+                                            var r = ts.getBoundingClientRect();
+                                            var spots = [
+                                                {x: r.left + 40, y: r.top + 35},
+                                                {x: r.left + 50, y: r.top + 45},
+                                                {x: r.left + 30, y: r.top + 40},
+                                                {x: r.left + r.width/2, y: r.top + r.height/2},
+                                                {x: r.left + 60, y: r.top + 55},
+                                                {x: r.left + 35, y: r.top + 30},
+                                                {x: r.left + 45, y: r.top + 50},
+                                            ];
+                                            spots.forEach(function(s) { Android.onClick(s.x, s.y); });
+                                            return true;
+                                        }
+                                        Android.onClick(cx, cy);
+                                        var el = document.elementFromPoint(cx, cy);
+                                        if (el) el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy}));
+                                        return false;
+                                    }
+                                    setInterval(function() {
+                                        var frames = document.querySelectorAll('iframe');
+                                        for (var i = 0; i < frames.length; i++) {
+                                            if (frames[i].src && frames[i].src.indexOf('challenges.cloudflare.com') > -1) {
+                                                var r = frames[i].getBoundingClientRect();
+                                                if (r.width > 0 && r.height > 0) {
+                                                    cx = r.left + 40; cy = r.top + 35;
+                                                    updateC();
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }, 1000);
                                     var observer = new MutationObserver(function() {
                                         var gate = document.querySelector('[data-redirect-gate-tier]');
                                         if (!gate || gate.offsetParent === null || gate.style.display === 'none') {
@@ -219,7 +250,7 @@ class SerienstreamPlugin : Plugin() {
                                     } else {
                                         Android.onCaptchaSolved();
                                     }
-                                    updatePos();
+                                    updateC();
                                 })();
                             """.trimIndent(), null)
                         }
