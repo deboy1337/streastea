@@ -118,16 +118,14 @@ class SerienstreamPlugin : Plugin() {
                         fun onClick(x: Float, y: Float) {
                             android.os.Handler(android.os.Looper.getMainLooper()).post {
                                 val now = SystemClock.uptimeMillis()
-                                val down = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0).apply {
-                                    source = InputDevice.SOURCE_TOUCHSCREEN
-                                }
-                                webView.dispatchTouchEvent(down)
-                                down.recycle()
-                                val up = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, x, y, 0).apply {
-                                    source = InputDevice.SOURCE_TOUCHSCREEN
-                                }
-                                webView.dispatchTouchEvent(up)
-                                up.recycle()
+                                val d = MotionEvent.obtain(now, now, MotionEvent.ACTION_DOWN, x, y, 0)
+                                d.setSource(InputDevice.SOURCE_MOUSE)
+                                webView.dispatchTouchEvent(d)
+                                d.recycle()
+                                val u = MotionEvent.obtain(now, now + 80, MotionEvent.ACTION_UP, x, y, 0)
+                                u.setSource(InputDevice.SOURCE_MOUSE)
+                                webView.dispatchTouchEvent(u)
+                                u.recycle()
                             }
                         }
                         @JavascriptInterface
