@@ -398,8 +398,8 @@ open class SerienstreamProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
-        hosters.amap { (playUrl, source, language) ->
-            if (playUrl.isEmpty()) return@amap
+        for ((playUrl, source, language) in hosters) {
+            if (playUrl.isEmpty()) continue
             Log.d(TAG, "Hoster: $source [$language] -> $playUrl")
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
