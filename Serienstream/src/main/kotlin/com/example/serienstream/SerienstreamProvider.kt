@@ -103,7 +103,15 @@ open class SerienstreamProvider : MainAPI() {
 
     private suspend fun getDocument(url: String, headers: Map<String, String> = emptyMap()): org.jsoup.nodes.Document {
         return withDomainFallback { baseUrl ->
-            val fullUrl = if (url.startsWith("http")) url else "$baseUrl$url"
+            val fullUrl = if (url.startsWith("http")) {
+                try {
+                    val parsed = url.toHttpUrl()
+                    if (parsed != null) baseUrl + parsed.encodedPath + (parsed.encodedQuery?.let { "?$it" } ?: "")
+                    else url
+                } catch (_: Exception) {
+                    url
+                }
+            } else "$baseUrl$url"
             val requestBuilder = Request.Builder().url(fullUrl).header("User-Agent", DESKTOP_UA)
             for ((k, v) in headers) requestBuilder.header(k, v)
             val request = requestBuilder.build()
