@@ -36,6 +36,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.jsoup.nodes.Element
 import java.util.concurrent.TimeUnit
+import java.net.URLEncoder
 
 open class SerienstreamProvider : MainAPI() {
     override var mainUrl = "https://serienstream.to"
@@ -50,6 +51,15 @@ open class SerienstreamProvider : MainAPI() {
         get() = sharedSessionCookies
         set(value) { sharedSessionCookies = value }
 
+    private val mirrorDomains = listOf(
+        "https://serienstream.to",
+        "https://serienstream.cloud",
+        "https://serienstream.lol",
+        "https://serienstream.stream"
+    )
+    private var workingDomainIndex = 0
+    private var domainTested = false
+
     private fun toast(msg: String) {
         try {
             val ctx = CommonActivity.activity ?: return
@@ -57,6 +67,49 @@ open class SerienstreamProvider : MainAPI() {
                 Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
             }
         } catch (_: Exception) {}
+    }
+
+    private suspend fun <T> withDomainFallback(block: (String) -> T): T {
+        var lastException: Exception? = null
+        
+        for (i in workingDomainIndex until mirrorDomains.size) {
+            mainUrl = mirrorDomains[i]
+            workingDomainIndex = i
+            try {
+                val result = block(mainUrl)
+                if (!domainTested) {
+                    domainTested = true
+                    toast("Serienstream: Verbunden über ${mainUrl}")
+                }
+                return result
+            } catch (e: Exception) {
+                lastException = e
+                Log.w(TAG, "Domain $mainUrl fehlgeschlagen: ${e.message}, versuche nächste...")
+                if (i == mirrorDomains.lastIndex) break
+                continue
+            }
+        }
+        
+        throw lastException ?: RuntimeException("Alle Spiegel-Domains fehlgeschlagen")
+    }
+
+    private val docClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .followRedirects(true)
+        .build()
+
+    private suspend fun getDocument(url: String, headers: Map<String, String> = emptyMap()): org.jsoup.nodes.Document {
+        return withDomainFallback { baseUrl ->
+            val fullUrl = if (url.startsWith("http")) url else "$baseUrl$url"
+            val requestBuilder = Request.Builder().url(fullUrl).header("User-Agent", DESKTOP_UA)
+            for ((k, v) in headers) requestBuilder.header(k, v)
+            val request = requestBuilder.build()
+            val response = docClient.newCall(request).execute()
+            if (!response.isSuccessful) throw RuntimeException("HTTP ${response.code}")
+            val html = response.body?.string() ?: throw RuntimeException("Empty response")
+            org.jsoup.Jsoup.parse(html, fullUrl)
+        }
     }
 
     private fun createCookieClient(): OkHttpClient {
@@ -103,92 +156,116 @@ open class SerienstreamProvider : MainAPI() {
             return
         }
 
-        val client = createCookieClient()
-
-        try {
-            val loginPageRequest = Request.Builder()
-                .url("$mainUrl/login")
-                .header("User-Agent", DESKTOP_UA)
-                .get()
-                .build()
-
-            val loginPageResponse = client.newCall(loginPageRequest).execute()
-            val loginPageHtml = loginPageResponse.body?.string() ?: ""
-
-            val csrfToken = Regex("""name="_token"\s+value="([^"]+)""").find(loginPageHtml)
-                ?.groupValues?.get(1)
-                ?: Regex("""content="([^"]+)"\s*""").find(
-                    Regex("""meta\s+name="csrf-token"\s+content="([^"]+)""").find(loginPageHtml)?.value ?: ""
-                )?.groupValues?.get(1)
-
-            if (csrfToken == null) {
-                Log.e(TAG, "CSRF token not found on login page")
-                toast("Serienstream: CSRF Token nicht gefunden")
-                return
-            }
-
-            toast("Serienstream: Login wird versucht...")
-
-            val formBody = FormBody.Builder()
-                .add("_token", csrfToken)
-                .add("email", email)
-                .add("password", password)
-                .build()
-
-            val postRequest = Request.Builder()
-                .url("$mainUrl/login")
-                .header("User-Agent", DESKTOP_UA)
-                .header("Referer", "$mainUrl/login")
-                .header("Origin", mainUrl)
-                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-                .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
-                .header("X-XSRF-TOKEN", csrfToken)
-                .post(formBody)
-                .build()
-
-            val postResponse = client.newCall(postRequest).execute()
-            val postCode = postResponse.code
-
-            if (postCode == 302 || postCode == 301) {
-                val redirectLocation = postResponse.header("Location") ?: ""
-                val fullRedirectUrl = if (redirectLocation.startsWith("http")) redirectLocation
-                    else "$mainUrl$redirectLocation"
-
-                val verifyRequest = Request.Builder()
-                    .url(fullRedirectUrl)
+        for (i in workingDomainIndex until mirrorDomains.size) {
+            mainUrl = mirrorDomains[i]
+            workingDomainIndex = i
+            
+            val client = createCookieClient()
+            
+            try {
+                val loginPageRequest = Request.Builder()
+                    .url("$mainUrl/login")
                     .header("User-Agent", DESKTOP_UA)
                     .get()
                     .build()
 
-                val verifyResponse = client.newCall(verifyRequest).execute()
-                val verifyHtml = verifyResponse.body?.string() ?: ""
+                val loginPageResponse = client.newCall(loginPageRequest).execute()
+                val loginPageHtml = loginPageResponse.body?.string() ?: ""
 
-                if (verifyHtml.contains("Willkommen") || verifyHtml.contains("logout")) {
-                    isLoggedIn = true
-                    val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
-                    sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
-                    toast("Serienstream: Login erfolgreich!")
-                } else {
-                    toast("Serienstream: Login fehlgeschlagen")
+                val csrfToken = Regex("""name="_token"\s+value="([^"]+)""").find(loginPageHtml)
+                    ?.groupValues?.get(1)
+                    ?: Regex("""content="([^"]+)"\s*""").find(
+                        Regex("""meta\s+name="csrf-token"\s+content="([^"]+)""").find(loginPageHtml)?.value ?: ""
+                    )?.groupValues?.get(1)
+
+                if (csrfToken == null) {
+                    Log.e(TAG, "CSRF token not found on login page for $mainUrl")
+                    if (i < mirrorDomains.lastIndex) continue
+                    toast("Serienstream: CSRF Token nicht gefunden")
+                    return
                 }
-            } else if (postCode == 200) {
-                val bodyHtml = postResponse.body?.string() ?: ""
-                if (bodyHtml.contains("Anmelden") && bodyHtml.contains("_token")) {
-                    val errorMsg = Regex("""class="alert-danger[^"]*"[^>]*>([^<]+)""").find(bodyHtml)
-                        ?.groupValues?.get(1)?.trim() ?: "Falsche Zugangsdaten?"
-                    toast("Serienstream: Login fehlgeschlagen: $errorMsg")
+
+                toast("Serienstream: Login wird versucht... ($mainUrl)")
+
+                val formBody = FormBody.Builder()
+                    .add("_token", csrfToken)
+                    .add("email", email)
+                    .add("password", password)
+                    .build()
+
+                val postRequest = Request.Builder()
+                    .url("$mainUrl/login")
+                    .header("User-Agent", DESKTOP_UA)
+                    .header("Referer", "$mainUrl/login")
+                    .header("Origin", mainUrl)
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                    .header("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
+                    .header("X-XSRF-TOKEN", csrfToken)
+                    .post(formBody)
+                    .build()
+
+                val postResponse = client.newCall(postRequest).execute()
+                val postCode = postResponse.code
+
+                if (postCode == 302 || postCode == 301) {
+                    val redirectLocation = postResponse.header("Location") ?: ""
+                    val fullRedirectUrl = if (redirectLocation.startsWith("http")) redirectLocation
+                        else "$mainUrl$redirectLocation"
+
+                    val verifyRequest = Request.Builder()
+                        .url(fullRedirectUrl)
+                        .header("User-Agent", DESKTOP_UA)
+                        .get()
+                        .build()
+
+                    val verifyResponse = client.newCall(verifyRequest).execute()
+                    val verifyHtml = verifyResponse.body?.string() ?: ""
+
+                    if (verifyHtml.contains("Willkommen") || verifyHtml.contains("logout")) {
+                        isLoggedIn = true
+                        val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
+                        sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
+                        if (!domainTested) {
+                            domainTested = true
+                            toast("Serienstream: Verbunden über $mainUrl")
+                        }
+                        toast("Serienstream: Login erfolgreich!")
+                        return
+                    } else {
+                        if (i < mirrorDomains.lastIndex) continue
+                        toast("Serienstream: Login fehlgeschlagen")
+                        return
+                    }
+                } else if (postCode == 200) {
+                    val bodyHtml = postResponse.body?.string() ?: ""
+                    if (bodyHtml.contains("Anmelden") && bodyHtml.contains("_token")) {
+                        val errorMsg = Regex("""class="alert-danger[^"]*"[^>]*>([^<]+)""").find(bodyHtml)
+                            ?.groupValues?.get(1)?.trim() ?: "Falsche Zugangsdaten?"
+                        if (i < mirrorDomains.lastIndex) continue
+                        toast("Serienstream: Login fehlgeschlagen: $errorMsg")
+                        return
+                    } else {
+                        isLoggedIn = true
+                        val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
+                        sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
+                        if (!domainTested) {
+                            domainTested = true
+                            toast("Serienstream: Verbunden über $mainUrl")
+                        }
+                        toast("Serienstream: Login erfolgreich!")
+                        return
+                    }
                 } else {
-                    isLoggedIn = true
-                    val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
-                    sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
-                    toast("Serienstream: Login erfolgreich!")
+                    if (i < mirrorDomains.lastIndex) continue
+                    toast("Serienstream: Unerwarteter Status: $postCode")
+                    return
                 }
-            } else {
-                toast("Serienstream: Login Fehler (HTTP $postCode)")
+            } catch (e: Exception) {
+                Log.w(TAG, "Login failed on $mainUrl: ${e.message}")
+                if (i == mirrorDomains.lastIndex) {
+                    toast("Serienstream: Login auf allen Domains fehlgeschlagen")
+                }
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Login exception: ${e.message}", e)
-            toast("Serienstream: Login Fehler: ${e.message}")
         }
     }
 
@@ -212,9 +289,9 @@ open class SerienstreamProvider : MainAPI() {
         val sections = mutableListOf<HomePageList>()
 
         try {
-            val document = app.get("$mainUrl/beliebte-serien", headers = authHeaders()).document
-            document.select(".popular-page > div").forEach { elem ->
-                val header = elem.selectFirst("div > h2")?.text()?.trim() ?: return@forEach
+            val document = getDocument("/beliebte-serien", authHeaders())
+            for (elem in document.select(".popular-page > div")) {
+                val header = elem.selectFirst("div > h2")?.text()?.trim() ?: continue
                 val items = elem.select("a.show-card").mapNotNull { it.toShowCardResult() }
                 if (items.isNotEmpty()) {
                     sections.add(HomePageList(header, items))
@@ -231,7 +308,7 @@ open class SerienstreamProvider : MainAPI() {
         }
 
         try {
-            val doc = app.get("$mainUrl/serien?by=genre", headers = authHeaders()).document
+            val doc = getDocument("/serien?by=genre", authHeaders())
 
             val genreData = doc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { headingDiv ->
                 val genreName = headingDiv.selectFirst("h3")?.text()?.trim()?.let {
@@ -259,7 +336,7 @@ open class SerienstreamProvider : MainAPI() {
                 toast("${posterMap.size} Covers geladen")
             }
 
-            genreData.forEach { (genreName, textItems) ->
+            for ((genreName, textItems) in genreData) {
                 val items = textItems.mapNotNull { (name, href) ->
                     newTvSeriesSearchResponse(name, href, TvType.TvSeries) {
                         this.posterUrl = posterMap[href]
@@ -278,11 +355,8 @@ open class SerienstreamProvider : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         ensureLoggedIn()
-        val resp = app.get(
-            "$mainUrl/suche",
-            params = mapOf("term" to query, "tab" to "shows"),
-            headers = authHeaders()
-        ).document
+        val searchUrl = "/suche?term=${URLEncoder.encode(query, "UTF-8")}&tab=shows"
+        val resp = getDocument(searchUrl, authHeaders())
 
         return resp.select(".results-group .card").mapNotNull {
             it.toSearchResult()
@@ -294,7 +368,7 @@ open class SerienstreamProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         ensureLoggedIn()
 
-        val document = app.get(url, headers = authHeaders()).document
+        val document = getDocument(url, authHeaders())
         val title = document.selectFirst("h1")?.text()
             ?: throw RuntimeException("Failed to find series title")
 
@@ -312,7 +386,7 @@ open class SerienstreamProvider : MainAPI() {
 
         val episodes = document.select("#season-nav a.alphabet-link").amap {
             val seasonNumber = it.text().trim().toIntOrNull()
-            val seasonDocument = app.get(fixUrl(it.attr("href")), headers = authHeaders()).document
+            val seasonDocument = getDocument(fixUrl(it.attr("href")), authHeaders())
             seasonDocument.select("tr.episode-row").map { eps ->
                 val episodeLink = eps.attr("onclick")
                     ?.substringAfter("window.location='")
@@ -343,7 +417,7 @@ open class SerienstreamProvider : MainAPI() {
     ): Boolean {
         ensureLoggedIn()
 
-        val document = app.get(data, headers = authHeaders()).document
+        val document = getDocument(data, authHeaders())
 
         val gate = document.selectFirst("[data-redirect-gate-tier]")
 
@@ -403,8 +477,10 @@ open class SerienstreamProvider : MainAPI() {
             Log.d(TAG, "Hoster: $source [$language] -> $playUrl")
             val streamUrl = fixUrl(playUrl)
             val finalUrl = try {
-                val resp = app.get(streamUrl, headers = authHeaders())
-                resp.url
+                val reqBuilder = Request.Builder().url(streamUrl).header("User-Agent", DESKTOP_UA)
+                for ((k, v) in authHeaders()) reqBuilder.header(k, v)
+                val resp = docClient.newCall(reqBuilder.build()).execute()
+                resp.use { it.request.url.toString() }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed: $streamUrl: ${e.message}")
                 streamUrl
@@ -459,7 +535,9 @@ open class SerienstreamProvider : MainAPI() {
         if (json.isBlank() || json == "{}") return emptyMap()
         val obj = try { org.json.JSONObject(json) } catch (_: Exception) { return emptyMap() }
         val map = mutableMapOf<String, String>()
-        obj.keys().forEach { key ->
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
             obj.optString(key)?.let { map[key] = it }
         }
         Log.i(TAG, "loadPosterMap: ${map.size} entries")
@@ -642,7 +720,7 @@ open class SerienstreamProvider : MainAPI() {
                 Log.i(TAG, "Sync: ${posterMap.size} Poster gespeichert")
                 if (posterMap.isNotEmpty()) {
                     val obj = org.json.JSONObject()
-                    posterMap.forEach { (k, v) -> obj.put(k, v) }
+                    for ((k, v) in posterMap) obj.put(k, v)
                     setKey(SETTING_POSTER_MAP, obj.toString())
                 } else {
                     setKey(SETTING_POSTER_MAP, "")
