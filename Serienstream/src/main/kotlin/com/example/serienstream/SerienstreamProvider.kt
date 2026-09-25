@@ -81,6 +81,8 @@ open class SerienstreamProvider : MainAPI() {
                     domainTested = true
                     toast("Serienstream: Verbunden über ${mainUrl}")
                 }
+                // Arbeitsdomain speichern für Companion-Funktionen
+                setKey(SETTING_WORKING_DOMAIN, mainUrl)
                 return result
             } catch (e: Exception) {
                 lastException = e
@@ -229,6 +231,7 @@ open class SerienstreamProvider : MainAPI() {
                             domainTested = true
                             toast("Serienstream: Verbunden über $mainUrl")
                         }
+                        setKey(SETTING_WORKING_DOMAIN, mainUrl)
                         toast("Serienstream: Login erfolgreich!")
                         return
                     } else {
@@ -252,6 +255,7 @@ open class SerienstreamProvider : MainAPI() {
                             domainTested = true
                             toast("Serienstream: Verbunden über $mainUrl")
                         }
+                        setKey(SETTING_WORKING_DOMAIN, mainUrl)
                         toast("Serienstream: Login erfolgreich!")
                         return
                     }
@@ -559,8 +563,9 @@ open class SerienstreamProvider : MainAPI() {
         const val SETTING_POSTER_MAP = "genre_poster_map"
         const val SETTING_SYNC_REQUESTED = "sync_requested"
         const val SETTING_CAPTCHA_URL = "serienstream_captcha_url"
+        const val SETTING_WORKING_DOMAIN = "serienstream_working_domain"
         private const val TAG = "Serienstream"
-        private const val BASE_URL = "https://serienstream.to"
+        private const val DEFAULT_BASE_URL = "https://serienstream.to"
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 
         @JvmStatic
@@ -571,6 +576,12 @@ open class SerienstreamProvider : MainAPI() {
 
         @JvmStatic
         fun updateSessionCookies(cookies: String) { sharedSessionCookies = cookies }
+
+        @JvmStatic
+        fun getWorkingBaseUrl(): String {
+            val saved = getKey<String>(SETTING_WORKING_DOMAIN)
+            return if (saved.isNullOrBlank()) DEFAULT_BASE_URL else saved
+        }
 
         @JvmStatic
         private var cachedHosters = mutableListOf<List<String>>()
@@ -595,8 +606,9 @@ open class SerienstreamProvider : MainAPI() {
         fun clearCaptchaUrl() { setKey(SETTING_CAPTCHA_URL, "") }
 
         private fun doLogin(client: OkHttpClient, email: String, password: String): Map<String, String> {
+            val baseUrl = getWorkingBaseUrl()
             val loginPageReq = Request.Builder()
-                .url("$BASE_URL/login")
+                .url("$baseUrl/login")
                 .header("User-Agent", DESKTOP_UA)
                 .get()
                 .build()
@@ -611,23 +623,23 @@ open class SerienstreamProvider : MainAPI() {
                 .add("password", password)
                 .build()
             val loginPostReq = Request.Builder()
-                .url("$BASE_URL/login")
+                .url("$baseUrl/login")
                 .header("User-Agent", DESKTOP_UA)
-                .header("Referer", "$BASE_URL/login")
-                .header("Origin", BASE_URL)
+                .header("Referer", "$baseUrl/login")
+                .header("Origin", baseUrl)
                 .post(formBody)
                 .build()
             val loginResp = client.newCall(loginPostReq).execute()
             if (loginResp.code == 302) {
                 val loc = loginResp.header("Location") ?: ""
-                val fullLoc = if (loc.startsWith("http")) loc else "$BASE_URL$loc"
+                val fullLoc = if (loc.startsWith("http")) loc else "$baseUrl$loc"
                 client.newCall(Request.Builder()
                     .url(fullLoc)
                     .header("User-Agent", DESKTOP_UA)
                     .get().build()).execute()
             }
 
-            return client.cookieJar.loadForRequest("$BASE_URL/".toHttpUrl())
+            return client.cookieJar.loadForRequest("$baseUrl/".toHttpUrl())
                 .associate { it.name to it.value }
         }
 
@@ -654,7 +666,9 @@ open class SerienstreamProvider : MainAPI() {
                 var currentCookies = doLogin(client, email, password)
                 if (currentCookies.isEmpty()) { Log.w(TAG, "Sync: Login fehlgeschlagen"); return }
 
-                val genreDoc = org.jsoup.Jsoup.connect("$BASE_URL/serien?by=genre")
+                val baseUrl = getWorkingBaseUrl()
+
+                val genreDoc = org.jsoup.Jsoup.connect("$baseUrl/serien?by=genre")
                     .userAgent(DESKTOP_UA)
                     .cookies(currentCookies)
                     .get()
@@ -675,8 +689,8 @@ open class SerienstreamProvider : MainAPI() {
                     try {
                         var page = 1
                         while (true) {
-                            val pageUrl = if (page == 1) "$BASE_URL/genre/$slug"
-                                else "$BASE_URL/genre/$slug?page=$page"
+                            val pageUrl = if (page == 1) "$baseUrl/genre/$slug"
+                                else "$baseUrl/genre/$slug?page=$page"
 
                             try {
                                 val doc = org.jsoup.Jsoup.connect(pageUrl)
@@ -695,13 +709,13 @@ open class SerienstreamProvider : MainAPI() {
 
                                 for (card in cards) {
                                     val href = card.attr("href")
-                                    val fullHref = if (href.startsWith("http")) href else "$BASE_URL$href"
+                                    val fullHref = if (href.startsWith("http")) href else "$baseUrl$href"
                                     if (fullHref in seenHrefs) continue
 
                                     val img = card.selectFirst("img") ?: continue
                                     val poster = img.attr("data-src").ifEmpty { img.attr("src") }
                                     if (poster.isNotBlank()) {
-                                        val fullPoster = if (poster.startsWith("http")) poster else "$BASE_URL$poster"
+                                        val fullPoster = if (poster.startsWith("http")) poster else "$baseUrl$poster"
                                         posterMap[fullHref] = fullPoster
                                         seenHrefs.add(fullHref)
                                     }
