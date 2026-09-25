@@ -221,7 +221,7 @@ open class SerienstreamProvider : MainAPI() {
                     val verifyResponse = client.newCall(verifyRequest).execute()
                     val verifyHtml = verifyResponse.body?.string() ?: ""
 
-                    if (verifyHtml.contains("Willkommen") || verifyHtml.contains("logout")) {
+                    if (isLoggedInHtml(verifyHtml)) {
                         isLoggedIn = true
                         val allCookies = client.cookieJar.loadForRequest("$mainUrl/".toHttpUrl())
                         sessionCookies = allCookies.joinToString("; ") { "${it.name}=${it.value}" }
@@ -267,6 +267,15 @@ open class SerienstreamProvider : MainAPI() {
                 }
             }
         }
+    }
+
+    private fun isLoggedInHtml(html: String): Boolean {
+        val lower = html.lowercase()
+        return lower.contains("/logout") ||
+            lower.contains("abmelden") ||
+            lower.contains("willkommen") ||
+            lower.contains("mein konto") ||
+            lower.contains("angemeldet")
     }
 
     private fun authHeaders(): Map<String, String> {
