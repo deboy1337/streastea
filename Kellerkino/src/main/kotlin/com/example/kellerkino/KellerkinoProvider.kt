@@ -90,8 +90,7 @@ open class KellerkinoProvider : MainAPI() {
         listOf("IMDb Topliste" to "$mainUrl/imdb-rating/", "Alle Filme" to "$mainUrl/archiv/")
             .forEach { (title, url) ->
                 try {
-                    val doc = getDocument(url)
-                    val items = doc.select("article.movie-card").mapNotNull { it.toMovieCard() }
+                    val items = preloadListing(url)
                     if (items.isNotEmpty()) sections += HomePageList(title, items)
                 } catch (e: Exception) {
                     Log.w(TAG, "$title fehlgeschlagen: ${e.message}")
@@ -100,8 +99,7 @@ open class KellerkinoProvider : MainAPI() {
 
         for ((genre, slug) in CATEGORIES) {
             try {
-                val doc = getDocument("$mainUrl/$slug/")
-                val items = doc.select("article.movie-card").mapNotNull { it.toMovieCard() }
+                val items = preloadListing("$mainUrl/$slug/")
                 if (items.isNotEmpty()) sections += HomePageList(genre, items)
             } catch (e: Exception) {
                 Log.w(TAG, "Kategorie '$slug' fehlgeschlagen: ${e.message}")
@@ -109,6 +107,43 @@ open class KellerkinoProvider : MainAPI() {
         }
 
         return newHomePageResponse(sections, hasNext = false)
+    }
+
+    private suspend fun preloadListing(baseUrl: String): List<SearchResponse> {
+        listingCache[baseUrl]?.let { (timestamp, cached) ->
+            if (System.currentTimeMillis() - timestamp < CACHE_TTL_MS) return cached
+        }
+
+        val first = getDocument(baseUrl)
+        val result = mutableListOf<SearchResponse>()
+        result += first.select("article.movie-card").mapNotNull { it.toMovieCard() }
+        if (result.isEmpty()) return emptyList()
+
+        val pageLinks = first.select(".pagination a.page-numbers[href*='seite/']")
+        val firstHref = pageLinks.firstOrNull()?.attr("href")
+        val query = if (firstHref != null && firstHref.contains("?")) "?" + firstHref.substringAfter("?") else ""
+        val maxPage = pageLinks.mapNotNull { link ->
+            Regex("""/seite/(\d+)""").find(link.attr("href"))?.groupValues?.get(1)?.toIntOrNull()
+        }.maxOrNull() ?: 1
+
+        if (maxPage > 1) {
+            for (batch in (2..maxPage).toList().chunked(PAGE_BATCH)) {
+                val pages = batch.amap { page ->
+                    try {
+                        getDocument("${baseUrl}seite/$page/$query")
+                            .select("article.movie-card").mapNotNull { it.toMovieCard() }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Seite $page von $baseUrl fehlgeschlagen: ${e.message}")
+                        emptyList()
+                    }
+                }
+                pages.forEach { result += it }
+            }
+        }
+
+        val distinct = result.distinctBy { it.url }
+        if (distinct.isNotEmpty()) listingCache[baseUrl] = System.currentTimeMillis() to distinct
+        return distinct
     }
 
     private fun topCoverRow(doc: Document, cssClass: String, title: String): HomePageList? {
@@ -256,6 +291,10 @@ open class KellerkinoProvider : MainAPI() {
     companion object {
         private const val TAG = "Kellerkino"
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        private const val PAGE_BATCH = 8
+        private const val CACHE_TTL_MS = 2L * 60 * 60 * 1000
+
+        private val listingCache = mutableMapOf<String, Pair<Long, List<SearchResponse>>>()
 
         private val CATEGORIES = listOf(
             "Abenteuer" to "abenteuer",
