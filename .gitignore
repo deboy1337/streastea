@@ -1,6 +1,6 @@
 # Build
 *.cs3
-Serienstream/build/
+*/build/
 .gradle/
 .kotlin/
 local.properties
