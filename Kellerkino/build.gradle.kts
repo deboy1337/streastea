@@ -1,8 +1,8 @@
-version = 2
+version = 3
 
 cloudstream {
     language = "de"
-    description = "Ein Film für jeden Geschmack - Kellerkino.com (v2)"
+    description = "Ein Film für jeden Geschmack - Kellerkino.com (v3)"
     authors = listOf("Streamable")
 
     status = 1

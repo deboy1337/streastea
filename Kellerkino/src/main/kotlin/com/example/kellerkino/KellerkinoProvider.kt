@@ -106,7 +106,21 @@ open class KellerkinoProvider : MainAPI() {
             }
         }
 
+        KellerkinoCoverStore.save()
         return newHomePageResponse(sections, hasNext = false)
+    }
+
+    suspend fun syncCovers(): Int {
+        val archive = "$mainUrl/archiv/"
+        listingCache.remove(archive)
+        preloadListing(archive)
+        KellerkinoCoverStore.save()
+        return KellerkinoCoverStore.count()
+    }
+
+    fun clearCovers() {
+        listingCache.clear()
+        KellerkinoCoverStore.clear()
     }
 
     private suspend fun preloadListing(baseUrl: String): List<SearchResponse> {
@@ -142,6 +156,7 @@ open class KellerkinoProvider : MainAPI() {
         }
 
         val distinct = result.distinctBy { it.url }
+        KellerkinoCoverStore.save()
         if (distinct.isNotEmpty()) listingCache[baseUrl] = System.currentTimeMillis() to distinct
         return distinct
     }
@@ -150,7 +165,7 @@ open class KellerkinoProvider : MainAPI() {
         val items = doc.select("div.$cssClass a.top-cover").mapNotNull { a ->
             val href = fixUrlNull(a.attr("href")) ?: return@mapNotNull null
             val name = a.attr("title").trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
-            val poster = a.selectFirst("img")?.attr("src")?.let { fixUrlNull(it) }
+            val poster = KellerkinoCoverStore.resolve(href, a.selectFirst("img")?.attr("src")?.let { fixUrlNull(it) })
             newMovieSearchResponse(name, href, TvType.Movie) { this.posterUrl = poster }
         }
         return if (items.isEmpty()) null else HomePageList(title, items)
@@ -176,7 +191,9 @@ open class KellerkinoProvider : MainAPI() {
                     ?.let { Parser.unescapeEntities(it, false) }?.trim()
                     ?: continue
                 val link = obj.optString("link").trim().ifBlank { continue }
-                results += newMovieSearchResponse(title, link, TvType.Movie)
+                results += newMovieSearchResponse(title, link, TvType.Movie) {
+                    posterUrl = KellerkinoCoverStore.resolve(link, null)
+                }
                 links += link
             }
         } catch (e: Exception) {
@@ -184,12 +201,13 @@ open class KellerkinoProvider : MainAPI() {
         }
         if (links.isEmpty()) return results
 
-        val posters = links.take(10).amap { link ->
-            try { getDocument(link).selectFirst(".poster-box img")?.attr("src") } catch (_: Exception) { null }
+        results.filter { it.posterUrl.isNullOrBlank() }.take(10).amap { result ->
+            try {
+                val poster = getDocument(result.url).selectFirst(".poster-box img")?.attr("src")?.let { fixUrlNull(it) }
+                result.posterUrl = KellerkinoCoverStore.resolve(result.url, poster)
+            } catch (_: Exception) { }
         }
-        posters.forEachIndexed { idx, poster ->
-            if (idx < results.size && !poster.isNullOrBlank()) results[idx].posterUrl = fixUrlNull(poster)
-        }
+        KellerkinoCoverStore.save()
         return results
     }
 
@@ -198,7 +216,7 @@ open class KellerkinoProvider : MainAPI() {
         val title = document.selectFirst("h1")?.text()?.trim()
             ?: throw RuntimeException("Kein Titel gefunden: $url")
 
-        val poster = document.selectFirst(".poster-box img")?.attr("src")?.let { fixUrlNull(it) }
+        val poster = KellerkinoCoverStore.resolve(url, document.selectFirst(".poster-box img")?.attr("src")?.let { fixUrlNull(it) })
         val plot = document.selectFirst(".movie-description p")?.text()?.trim() ?: ""
         val year = document.selectFirst(".info-row-jahr .info-value")?.text()?.trim()?.toIntOrNull()
         val imdb = document.selectFirst(".info-row-imdb-bewertung .info-value")?.text()?.trim()
@@ -211,6 +229,7 @@ open class KellerkinoProvider : MainAPI() {
         val recommendations = document.select("[id^=nfo-similar-recommendations] article.movie-card")
             .mapNotNull { it.toMovieCard() }
 
+        KellerkinoCoverStore.save()
         return newMovieLoadResponse(title, url, TvType.Movie, dataUrl = url) {
             this.name = title
             this.posterUrl = poster
@@ -273,7 +292,7 @@ open class KellerkinoProvider : MainAPI() {
             ?.takeIf { it.isNotEmpty() }
             ?: selectFirst("img")?.attr("alt")?.trim()?.takeIf { it.isNotEmpty() }
             ?: return null
-        val poster = selectFirst("picture source")?.attr("srcset")?.substringBefore(" ")?.let { fixUrlNull(it) }
+        val poster = KellerkinoCoverStore.resolve(href, selectFirst("picture source")?.attr("srcset")?.substringBefore(" ")?.let { fixUrlNull(it) })
         return newMovieSearchResponse(title, href, TvType.Movie) { this.posterUrl = poster }
     }
 
@@ -284,7 +303,7 @@ open class KellerkinoProvider : MainAPI() {
         val title = img.attr("alt").trim()
             .ifBlank { selectFirst(".movie-card-body h2 a")?.text()?.trim().orEmpty() }
         if (title.isEmpty()) return null
-        val poster = img.attr("data-dmt-theme-src").ifBlank { img.attr("src") }.let { fixUrlNull(it) }
+        val poster = KellerkinoCoverStore.resolve(href, img.attr("data-dmt-theme-src").ifBlank { img.attr("src") }.let { fixUrlNull(it) })
         return newMovieSearchResponse(title, href, TvType.Movie) { this.posterUrl = poster }
     }
 
@@ -294,7 +313,7 @@ open class KellerkinoProvider : MainAPI() {
         private const val PAGE_BATCH = 8
         private const val CACHE_TTL_MS = 2L * 60 * 60 * 1000
 
-        private val listingCache = mutableMapOf<String, Pair<Long, List<SearchResponse>>>()
+        private val listingCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SearchResponse>>>()
 
         private val CATEGORIES = listOf(
             "Abenteuer" to "abenteuer",
