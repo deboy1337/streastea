@@ -10,12 +10,15 @@ import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.ViewGroup
+import android.view.View
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey
@@ -31,12 +34,17 @@ class SerienstreamPlugin : Plugin() {
         registerExtractorAPI(Voe1())
 
         openSettings = { ctx ->
+            fun dp(value: Int) = (value * ctx.resources.displayMetrics.density).toInt()
             val emailInput = EditText(ctx).apply {
+                id = View.generateViewId()
                 hint = "Email"
+                inputType = android.text.InputType.TYPE_CLASS_TEXT or
+                    android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
                 setText(getKey<String>(SerienstreamProvider.SETTING_EMAIL) ?: "")
                 setSingleLine()
             }
             val passwordInput = EditText(ctx).apply {
+                id = View.generateViewId()
                 hint = "Passwort"
                 setText(getKey<String>(SerienstreamProvider.SETTING_PASSWORD) ?: "")
                 setSingleLine()
@@ -46,28 +54,37 @@ class SerienstreamPlugin : Plugin() {
 
             val label = TextView(ctx).apply {
                 text = "Serienstream.to Login"
-                setPadding(48, 32, 48, 8)
+                setPadding(0, dp(8), 0, dp(8))
             }
 
             val syncBtn = Button(ctx).apply {
+                id = View.generateViewId()
                 text = "Covers sync"
-                setPadding(16, 8, 16, 8)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener {
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
+                    isEnabled = false
+                    text = "Cover-Sync läuft …"
                     Thread {
-                        SerienstreamProvider.syncGenrePosters()
-                        android.os.Handler(android.os.Looper.getMainLooper()).post {
-                            Toast.makeText(ctx, "Covers Sync abgeschlossen!", Toast.LENGTH_LONG).show()
+                        try {
+                            SerienstreamProvider.syncGenrePosters()
+                        } finally {
+                            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                isEnabled = true
+                                text = "Covers sync"
+                                Toast.makeText(ctx, "Cover-Sync beendet", Toast.LENGTH_LONG).show()
+                            }
                         }
                     }.start()
                 }
             }
 
             val clearBtn = Button(ctx).apply {
+                id = View.generateViewId()
                 text = "Covers leeren"
                 setTextColor(Color.parseColor("#E53935"))
-                setPadding(16, 8, 16, 8)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener {
                     SerienstreamProvider.clearCovers()
                     Toast.makeText(ctx, "Covers gelöscht!", Toast.LENGTH_LONG).show()
@@ -75,8 +92,9 @@ class SerienstreamPlugin : Plugin() {
             }
 
             val captchaBtn = Button(ctx).apply {
+                id = View.generateViewId()
                 text = "Captcha lösen"
-                setPadding(16, 8, 16, 8)
+                setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener {
                     val url = SerienstreamProvider.getCaptchaUrl()
                     if (url == null) {
@@ -270,34 +288,51 @@ class SerienstreamPlugin : Plugin() {
                         }
                     }
 
+                    dialog.show()
                     dialog.window?.let { w ->
                         w.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                         w.setGravity(Gravity.CENTER)
                     }
 
-                    dialog.show()
+                    webView.requestFocus()
                 }
-            }
-
-            val buttonRow = LinearLayout(ctx).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(syncBtn)
-                addView(clearBtn)
             }
 
             val layout = LinearLayout(ctx).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(48, 16, 48, 16)
+                setPadding(dp(24), dp(8), dp(24), dp(8))
                 addView(label)
                 addView(emailInput)
                 addView(passwordInput)
-                addView(buttonRow)
-                addView(captchaBtn)
+                listOf(syncBtn, clearBtn, captchaBtn).forEach { button ->
+                    addView(button, LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    ))
+                }
             }
 
-            AlertDialog.Builder(ctx)
+            val controls = listOf(emailInput, passwordInput, syncBtn, clearBtn, captchaBtn)
+            controls.forEachIndexed { index, view ->
+                if (index > 0) view.nextFocusUpId = controls[index - 1].id
+                if (index < controls.lastIndex) view.nextFocusDownId = controls[index + 1].id
+            }
+            val scroll = object : ScrollView(ctx) {
+                override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                    val maxHeight = (resources.displayMetrics.heightPixels * 0.6).toInt()
+                    val available = View.MeasureSpec.getSize(heightMeasureSpec)
+                    val height = if (View.MeasureSpec.getMode(heightMeasureSpec) == View.MeasureSpec.UNSPECIFIED) {
+                        maxHeight
+                    } else minOf(maxHeight, available)
+                    super.onMeasure(widthMeasureSpec, View.MeasureSpec.makeMeasureSpec(height, View.MeasureSpec.AT_MOST))
+                }
+            }.apply {
+                isFillViewport = true
+                addView(layout)
+            }
+            val settingsDialog = AlertDialog.Builder(ctx)
                 .setTitle("Serienstream Einstellungen")
-                .setView(layout)
+                .setView(scroll)
                 .setPositiveButton("Speichern") { _, _ ->
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
@@ -306,7 +341,20 @@ class SerienstreamPlugin : Plugin() {
                     setKey(SerienstreamProvider.SETTING_EMAIL, "")
                     setKey(SerienstreamProvider.SETTING_PASSWORD, "")
                 }
-                .show()
+                .setNeutralButton("Schließen", null)
+                .create()
+            settingsDialog.show()
+            settingsDialog.window?.apply {
+                setLayout(minOf(dp(640), (ctx.resources.displayMetrics.widthPixels * 0.95).toInt()),
+                    ViewGroup.LayoutParams.WRAP_CONTENT)
+                setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+            }
+            val save = settingsDialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            save.id = View.generateViewId()
+            captchaBtn.nextFocusDownId = save.id
+            save.nextFocusUpId = captchaBtn.id
+            syncBtn.requestFocus()
         }
     }
 }
