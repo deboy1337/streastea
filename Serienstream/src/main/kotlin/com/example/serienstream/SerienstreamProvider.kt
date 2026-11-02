@@ -301,9 +301,7 @@ open class SerienstreamProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (getKey<String>(SETTING_SYNC_REQUESTED) == "true") {
             setKey(SETTING_SYNC_REQUESTED, "false")
-            setKey(SETTING_POSTER_MAP, "")
-            Log.i(TAG, "getMainPage: sync requested, cleared old cache")
-            Thread { SerienstreamProvider.syncGenrePosters() }.start()
+            startCoverSync()
         }
 
         ensureLoggedIn()
@@ -348,19 +346,19 @@ open class SerienstreamProvider : MainAPI() {
                 Pair(genreName, items)
             }
 
-            val posterMap = loadPosterMap()
-            Log.i(TAG, "getMainPage: ${posterMap.size} cached posters")
-            if (posterMap.isEmpty()) {
+            val posterCount = SerienstreamCoverStore.count()
+            Log.i(TAG, "getMainPage: $posterCount cached posters")
+            if (getKey<String>(SETTING_COVER_SYNC_TIME).isNullOrBlank()) {
                 Log.i(TAG, "getMainPage: no cached posters, background sync started")
-                Thread { SerienstreamProvider.syncGenrePosters() }.start()
+                startCoverSync()
             } else {
-                toast("${posterMap.size} Covers geladen")
+                toast("$posterCount Covers geladen")
             }
 
             for ((genreName, textItems) in genreData) {
                 val items = textItems.mapNotNull { (name, href) ->
                     newTvSeriesSearchResponse(name, href, TvType.TvSeries) {
-                        this.posterUrl = posterMap[href]
+                        this.posterUrl = SerienstreamCoverStore.resolve(href, null)
                     }
                 }
                 if (items.isNotEmpty()) {
@@ -371,6 +369,7 @@ open class SerienstreamProvider : MainAPI() {
             Log.e(TAG, "Failed: ${e.message}")
         }
 
+        SerienstreamCoverStore.save()
         return newHomePageResponse(sections, hasNext = false)
     }
 
@@ -379,11 +378,13 @@ open class SerienstreamProvider : MainAPI() {
         val searchUrl = "/suche?term=${URLEncoder.encode(query, "UTF-8")}&tab=shows"
         val resp = getDocument(searchUrl, authHeaders())
 
-        return resp.select(".results-group .card").mapNotNull {
+        val results = resp.select(".results-group .card").mapNotNull {
             it.toSearchResult()
         }.ifEmpty {
             resp.select("a.show-card").mapNotNull { it.toShowCardResult() }
         }.distinctBy { it.url }
+        SerienstreamCoverStore.save()
+        return results
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -393,8 +394,9 @@ open class SerienstreamProvider : MainAPI() {
         val title = document.selectFirst("h1")?.text()
             ?: throw RuntimeException("Failed to find series title")
 
-        val poster = document.select("img[alt='${title.replace("'", "\\'")}']")
-            .firstOrNull()?.let { fixUrlNull(it.attr("data-src")) }
+        val poster = SerienstreamCoverStore.resolve(url, document.select("img[alt='${title.replace("'", "\\'")}']")
+            .firstOrNull()?.let { fixUrlNull(it.attr("data-src").ifBlank { it.attr("src") }) })
+        SerienstreamCoverStore.save()
 
         val description = document.selectFirst(".description-text")?.text() ?: ""
 
@@ -531,9 +533,9 @@ open class SerienstreamProvider : MainAPI() {
         ) ?: return null
         val imgEl = selectFirst("img") ?: return null
         val title = imgEl.attr("alt").ifEmpty { return null }
-        val posterUrl = fixUrlNull(
+        val posterUrl = SerienstreamCoverStore.resolve(href, fixUrlNull(
             imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
-        )
+        ))
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
         }
@@ -543,32 +545,19 @@ open class SerienstreamProvider : MainAPI() {
         val href = fixUrlNull(this.selectFirst("a")?.attr("href")) ?: return null
         val imgEl = this.selectFirst("img") ?: return null
         val title = imgEl.attr("alt").ifEmpty { return null }
-        val posterUrl = fixUrlNull(
+        val posterUrl = SerienstreamCoverStore.resolve(href, fixUrlNull(
             imgEl.attr("data-src").ifEmpty { imgEl.attr("src") }
-        )
+        ))
         return newTvSeriesSearchResponse(title, href, TvType.TvSeries) {
             this.posterUrl = posterUrl
         }
-    }
-
-    private fun loadPosterMap(): Map<String, String> {
-        val json = getKey<String>(SETTING_POSTER_MAP) ?: return emptyMap()
-        if (json.isBlank() || json == "{}") return emptyMap()
-        val obj = try { org.json.JSONObject(json) } catch (_: Exception) { return emptyMap() }
-        val map = mutableMapOf<String, String>()
-        val keys = obj.keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            obj.optString(key)?.let { map[key] = it }
-        }
-        Log.i(TAG, "loadPosterMap: ${map.size} entries")
-        return map
     }
 
     companion object {
         const val SETTING_EMAIL = "serienstream_email"
         const val SETTING_PASSWORD = "serienstream_password"
         const val SETTING_POSTER_MAP = "genre_poster_map"
+        private const val SETTING_COVER_SYNC_TIME = "serienstream_cover_sync_time"
         const val SETTING_SYNC_REQUESTED = "sync_requested"
         const val SETTING_CAPTCHA_URL = "serienstream_captcha_url"
         const val SETTING_WORKING_DOMAIN = "serienstream_working_domain"
@@ -606,8 +595,22 @@ open class SerienstreamProvider : MainAPI() {
         )
 
         fun clearCovers() {
-            setKey(SETTING_POSTER_MAP, "")
+            check(!coverSyncRunning.get()) { "Cover-Sync läuft noch. Bitte zuerst abwarten." }
+            SerienstreamCoverStore.clear()
+            setKey(SETTING_COVER_SYNC_TIME, "")
             Log.i(TAG, "Covers gelöscht")
+        }
+
+        private val coverSyncRunning = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun isCoverSyncRunning(): Boolean = coverSyncRunning.get()
+
+        private fun startCoverSync() {
+            Thread {
+                runCatching { syncGenrePosters() }.onFailure {
+                    Log.w(TAG, "Cover-Sync: ${it.message}")
+                }
+            }.start()
         }
 
         fun getCaptchaUrl(): String? = getKey<String>(SETTING_CAPTCHA_URL)?.takeIf { it.isNotBlank() }
@@ -651,35 +654,55 @@ open class SerienstreamProvider : MainAPI() {
                 .associate { it.name to it.value }
         }
 
-        fun syncGenrePosters() {
-            val email = getKey<String>(SETTING_EMAIL) ?: ""
-            val password = getKey<String>(SETTING_PASSWORD) ?: ""
-            if (email.isBlank() || password.isBlank()) {
-                Log.w(TAG, "Sync: keine Login-Daten")
-                return
-            }
-
+        fun syncGenrePosters(onProgress: (String) -> Unit = {}): Int {
+            check(coverSyncRunning.compareAndSet(false, true)) { "Cover-Sync läuft bereits" }
             try {
+                val email = getKey<String>(SETTING_EMAIL) ?: ""
+                val password = getKey<String>(SETTING_PASSWORD) ?: ""
+                check(email.isNotBlank() && password.isNotBlank()) { "Bitte zuerst Email und Passwort eintragen" }
+                onProgress("Anmeldung …")
                 val client = OkHttpClient.Builder()
                     .connectTimeout(15, TimeUnit.SECONDS)
                     .readTimeout(15, TimeUnit.SECONDS)
                     .followRedirects(false)
                     .cookieJar(object : CookieJar {
                         private val store = mutableListOf<Cookie>()
-                        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) { store.addAll(cookies) }
-                        override fun loadForRequest(url: HttpUrl): List<Cookie> = store
+                        override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
+                            store.removeAll { old -> cookies.any { it.name == old.name && it.domain == old.domain && it.path == old.path } }
+                            store.addAll(cookies)
+                        }
+                        override fun loadForRequest(url: HttpUrl): List<Cookie> =
+                            store.filter { it.expiresAt > System.currentTimeMillis() && it.matches(url) }
                     })
                     .build()
 
                 var currentCookies = doLogin(client, email, password)
-                if (currentCookies.isEmpty()) { Log.w(TAG, "Sync: Login fehlgeschlagen"); return }
+                check(currentCookies.isNotEmpty()) { "Anmeldung fehlgeschlagen" }
 
                 val baseUrl = getWorkingBaseUrl()
 
-                val genreDoc = org.jsoup.Jsoup.connect("$baseUrl/serien?by=genre")
-                    .userAgent(DESKTOP_UA)
-                    .cookies(currentCookies)
-                    .get()
+                fun fetchPage(url: String): org.jsoup.nodes.Document {
+                    var failure: Exception? = null
+                    repeat(2) { attempt ->
+                        try {
+                            val doc = org.jsoup.Jsoup.connect(url)
+                                .userAgent(DESKTOP_UA).cookies(currentCookies).timeout(30000).get()
+                            if (doc.title().contains("Anmelden", ignoreCase = true) ||
+                                doc.selectFirst("input[name=password]") != null) {
+                                currentCookies = doLogin(client, email, password)
+                                throw IllegalStateException("Erneute Anmeldung erforderlich")
+                            }
+                            check(!doc.title().contains("Just a moment", ignoreCase = true)) { "Cloudflare-Challenge" }
+                            return doc
+                        } catch (e: Exception) {
+                            failure = e
+                            if (attempt == 0) Thread.sleep(500)
+                        }
+                    }
+                    throw failure ?: IllegalStateException("Seite konnte nicht geladen werden")
+                }
+
+                val genreDoc = fetchPage("$baseUrl/serien?by=genre")
 
                 val genreSlugs = genreDoc.select("div.background-1.border-radius-4.px-2.py-2.mb-2").mapNotNull { div ->
                     val genreKey = div.selectFirst("h3")?.text()?.trim() ?: return@mapNotNull null
@@ -687,77 +710,44 @@ open class SerienstreamProvider : MainAPI() {
                         genreKey.removePrefix("filter.genre_")
                     else
                         genreKey.lowercase().replace(" ", "-")
-                }
+                }.distinct()
+                check(genreSlugs.isNotEmpty()) { "Keine Genres gefunden. Anmeldung oder Website prüfen." }
                 Log.i(TAG, "Sync: ${genreSlugs.size} Genres")
 
                 val posterMap = mutableMapOf<String, String>()
-                val seenHrefs = mutableSetOf<String>()
-
                 genreSlugs.forEachIndexed { idx, slug ->
-                    try {
-                        var page = 1
-                        while (true) {
-                            val pageUrl = if (page == 1) "$baseUrl/genre/$slug"
-                                else "$baseUrl/genre/$slug?page=$page"
-
-                            try {
-                                val doc = org.jsoup.Jsoup.connect(pageUrl)
-                                    .userAgent(DESKTOP_UA)
-                                    .cookies(currentCookies)
-                                    .get()
-
-                                val cards = doc.select("a.show-card")
-                                if (cards.isEmpty()) {
-                                    if (doc.title().contains("Anmelden", ignoreCase = true)) {
-                                        currentCookies = doLogin(client, email, password)
-                                        if (currentCookies.isNotEmpty()) continue
-                                    }
-                                    break
-                                }
-
-                                for (card in cards) {
-                                    val href = card.attr("href")
-                                    val fullHref = if (href.startsWith("http")) href else "$baseUrl$href"
-                                    if (fullHref in seenHrefs) continue
-
-                                    val img = card.selectFirst("img") ?: continue
-                                    val poster = img.attr("data-src").ifEmpty { img.attr("src") }
-                                    if (poster.isNotBlank()) {
-                                        val fullPoster = if (poster.startsWith("http")) poster else "$baseUrl$poster"
-                                        posterMap[fullHref] = fullPoster
-                                        seenHrefs.add(fullHref)
-                                    }
-                                }
-
-                                val hasNext = doc.select("a.page-link[rel=next]").isNotEmpty()
-                                if (!hasNext) break
-                                page++
-                                Thread.sleep(200)
-                            } catch (e: Exception) {
-                                Log.w(TAG, "Fehler $pageUrl: ${e.message}")
-                                if (page == 1) break
-                                page++
-                                Thread.sleep(500)
+                    var page = 1
+                    var pageUrl = "$baseUrl/genre/$slug"
+                    val visited = mutableSetOf<String>()
+                    while (true) {
+                        check(visited.add(pageUrl)) { "Wiederholte Seite bei Genre $slug" }
+                        onProgress("Genre ${idx + 1}/${genreSlugs.size}: $slug – Seite $page – ${posterMap.size} Covers")
+                        val doc = fetchPage(pageUrl)
+                        val cards = doc.select("a.show-card")
+                        check(cards.isNotEmpty()) { "Keine Serien auf $slug, Seite $page gefunden" }
+                        for (card in cards) {
+                            val href = pageUrl.toHttpUrl().resolve(card.attr("href"))?.toString() ?: continue
+                            val img = card.selectFirst("img") ?: continue
+                            val poster = img.attr("data-src").ifBlank { img.attr("src") }
+                            if (poster.isNotBlank()) {
+                                pageUrl.toHttpUrl().resolve(poster)?.toString()?.let { posterMap[href] = it }
                             }
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Genre '$slug' fehlgeschlagen: ${e.message}")
-                    }
-                    if ((idx + 1) % 5 == 0) {
-                        Log.i(TAG, "Sync: ${idx + 1}/${genreSlugs.size} Genres, ${posterMap.size} Poster")
+                        val next = doc.selectFirst("a.page-link[rel=next][href]") ?: break
+                        val nextUrl = pageUrl.toHttpUrl().resolve(next.attr("href"))?.toString()
+                            ?: throw IllegalStateException("Ungültige nächste Seite")
+                        check(nextUrl.toHttpUrl().host == baseUrl.toHttpUrl().host) { "Unerwartete nächste Seite" }
+                        pageUrl = nextUrl
+                        page++
+                        Thread.sleep(200)
                     }
                 }
-
-                Log.i(TAG, "Sync: ${posterMap.size} Poster gespeichert")
-                if (posterMap.isNotEmpty()) {
-                    val obj = org.json.JSONObject()
-                    for ((k, v) in posterMap) obj.put(k, v)
-                    setKey(SETTING_POSTER_MAP, obj.toString())
-                } else {
-                    setKey(SETTING_POSTER_MAP, "")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Sync fehlgeschlagen: ${e.message}")
+                check(posterMap.isNotEmpty()) { "Keine Covers gefunden; vorhandene Covers bleiben erhalten" }
+                val count = SerienstreamCoverStore.mergeAndSave(posterMap)
+                setKey(SETTING_COVER_SYNC_TIME, System.currentTimeMillis().toString())
+                return count
+            } finally {
+                coverSyncRunning.set(false)
             }
         }
     }

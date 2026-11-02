@@ -1,6 +1,6 @@
 {
-  "name": "Serienstream.to Repository",
-  "description": "CloudStream Plugin fuer Serienstream.to (v2)",
+  "name": "Streamable Repository",
+  "description": "CloudStream Plugins für Serienstream und Kellerkino",
   "manifestVersion": 1,
   "pluginLists": [
     "https://raw.githubusercontent.com/deboy1337/streastea/builds/plugins.json"

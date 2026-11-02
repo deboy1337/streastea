@@ -53,10 +53,11 @@ class SerienstreamPlugin : Plugin() {
             }
 
             val label = TextView(ctx).apply {
-                text = "Serienstream.to Login"
+                text = "Serienstream.to Login\n${SerienstreamCoverStore.count()} Covers auf diesem Gerät gespeichert"
                 setPadding(0, dp(8), 0, dp(8))
             }
 
+            val coverControls = mutableListOf<Button>()
             val syncBtn = Button(ctx).apply {
                 id = View.generateViewId()
                 text = "Covers sync"
@@ -64,17 +65,26 @@ class SerienstreamPlugin : Plugin() {
                 setOnClickListener {
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
-                    isEnabled = false
+                    coverControls.forEach { it.isEnabled = false }
                     text = "Cover-Sync läuft …"
+                    val handler = android.os.Handler(android.os.Looper.getMainLooper())
                     Thread {
-                        try {
-                            SerienstreamProvider.syncGenrePosters()
-                        } finally {
-                            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                                isEnabled = true
-                                text = "Covers sync"
-                                Toast.makeText(ctx, "Cover-Sync beendet", Toast.LENGTH_LONG).show()
+                        val result = runCatching {
+                            SerienstreamProvider.syncGenrePosters { progress ->
+                                handler.post { label.text = progress }
                             }
+                        }
+                        handler.post {
+                            coverControls.forEach { it.isEnabled = true }
+                            text = "Covers sync"
+                            label.text = result.fold(
+                                onSuccess = { "$it Covers auf diesem Gerät gespeichert\nStartseite erneut öffnen, um sie anzuzeigen." },
+                                onFailure = { "Cover-Sync fehlgeschlagen: ${it.message}\n${SerienstreamCoverStore.count()} Covers gespeichert" }
+                            )
+                            Toast.makeText(ctx, result.fold(
+                                onSuccess = { "$it Covers gespeichert" },
+                                onFailure = { "Cover-Sync fehlgeschlagen: ${it.message}" }
+                            ), Toast.LENGTH_LONG).show()
                         }
                     }.start()
                 }
@@ -86,10 +96,16 @@ class SerienstreamPlugin : Plugin() {
                 setTextColor(Color.parseColor("#E53935"))
                 setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener {
-                    SerienstreamProvider.clearCovers()
-                    Toast.makeText(ctx, "Covers gelöscht!", Toast.LENGTH_LONG).show()
+                    runCatching { SerienstreamProvider.clearCovers() }.fold(
+                        onSuccess = {
+                            label.text = "Cover-Speicher geleert"
+                            Toast.makeText(ctx, "Covers gelöscht!", Toast.LENGTH_LONG).show()
+                        },
+                        onFailure = { Toast.makeText(ctx, it.message, Toast.LENGTH_LONG).show() }
+                    )
                 }
             }
+            coverControls.addAll(listOf(syncBtn, clearBtn))
 
             val captchaBtn = Button(ctx).apply {
                 id = View.generateViewId()

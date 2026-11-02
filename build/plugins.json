@@ -4,10 +4,10 @@
     "authors": [
       "Streamable"
     ],
-    "description": "Serien online ansehen und streamen - SerienStream.to (v55)",
-    "fileHash": "sha256-24cdc49a8fa5b50d923223348cddca95682fd853256df07c1e2f615a4f4a877c",
-    "fileSize": 52849,
-    "hash": "24cdc49a8fa5b50d923223348cddca95682fd853256df07c1e2f615a4f4a877c",
+    "description": "Serien online ansehen und streamen - SerienStream.to (v56)",
+    "fileHash": "sha256-4d24dca00fc0987bad491c8b27569bbaa3123c40498a128d58aff12978060758",
+    "fileSize": 58226,
+    "hash": "4d24dca00fc0987bad491c8b27569bbaa3123c40498a128d58aff12978060758",
     "iconUrl": "https://www.google.com/s2/favicons?domain=https://serienstream.to&sz=%size%",
     "internalName": "Serienstream",
     "language": "de",
@@ -18,7 +18,7 @@
       "TvSeries"
     ],
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Serienstream.cs3",
-    "version": 55
+    "version": 56
   },
   {
     "apiVersion": 1,
