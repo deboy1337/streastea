@@ -21,6 +21,10 @@ import com.lagradost.cloudstream3.utils.ExtractorLink
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.nodes.Document
@@ -42,28 +46,70 @@ open class KellerkinoProvider : MainAPI() {
         .followRedirects(true)
         .build()
 
-    private suspend fun getDocument(url: String): Document {
+    private suspend fun getDocument(url: String): Document = withContext(Dispatchers.IO) {
         val fullUrl = if (url.startsWith("http")) url else "$mainUrl$url"
         val request = Request.Builder().url(fullUrl)
             .header("User-Agent", DESKTOP_UA)
             .header("Referer", mainUrl)
             .build()
-        val response = docClient.newCall(request).execute()
-        if (!response.isSuccessful) throw RuntimeException("HTTP ${response.code}: $fullUrl")
-        val html = response.body?.string() ?: throw RuntimeException("Leere Antwort: $fullUrl")
+        val html = docClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) throw RuntimeException("HTTP ${response.code}: $fullUrl")
+            response.body.string()
+        }
         val document = org.jsoup.Jsoup.parse(html, fullUrl)
         if (document.title().contains("Just a moment", ignoreCase = true)) {
             throw RuntimeException("Cloudflare-Challenge: $fullUrl")
         }
-        return document
+        document
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         if (page > 1) return newHomePageResponse(emptyList(), hasNext = false)
+        val cached = cachedCatalog ?: KellerkinoCatalogStore.load()?.also { cachedCatalog = it }
+        if (cached != null) {
+            if (System.currentTimeMillis() - cached.updatedAt >= CATALOG_TTL_MS && refreshStarted.compareAndSet(false, true)) {
+                Thread {
+                    try {
+                        runBlocking { refreshCatalog() }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Katalog-Aktualisierung fehlgeschlagen: ${e.message}")
+                    } finally {
+                        refreshStarted.set(false)
+                    }
+                }.start()
+            }
+            return catalogResponse(cached)
+        }
+        return catalogResponse(refreshCatalog())
+    }
+
+    private fun catalogResponse(catalog: KellerkinoCatalogStore.Catalog): HomePageResponse {
+        val sections = catalog.rows.map { row ->
+            HomePageList(row.title, row.movies.map { movie ->
+                newMovieSearchResponse(movie.title, movie.url, TvType.Movie) {
+                    posterUrl = movie.poster
+                }
+            })
+        }
+        return newHomePageResponse(sections, hasNext = false)
+    }
+
+    suspend fun updateCatalog(onProgress: (String) -> Unit = {}): Int {
+        val catalog = refreshCatalog(onProgress)
+        return catalog.rows.flatMap { it.movies }.distinctBy { it.url }.size
+    }
+
+    private suspend fun refreshCatalog(onProgress: (String) -> Unit = {}): KellerkinoCatalogStore.Catalog = catalogMutex.withLock {
         val sections = mutableListOf<HomePageList>()
+        var complete = true
+        listingCache.clear()
 
         try {
+            onProgress("Startseite laden …")
             val home = getDocument(mainUrl)
+            if (home.select("a.top-cover, article.movie-card").isEmpty()) {
+                throw IllegalStateException("Keine Filme auf der Startseite gefunden")
+            }
 
             val cinema = home.select("a.dmt-home-cinema-focus, a.dmt-home-cinema-secondary, a.dmt-home-cinema-more-card")
                 .mapNotNull { it.toCinemaCard() }
@@ -84,30 +130,43 @@ open class KellerkinoProvider : MainAPI() {
                 ?.select("article.movie-card")?.mapNotNull { it.toMovieCard() }.orEmpty()
             if (empItems.isNotEmpty()) sections += HomePageList("Empfehlungen", empItems)
         } catch (e: Exception) {
+            complete = false
             Log.w(TAG, "Startseite fehlgeschlagen: ${e.message}")
         }
 
         listOf("IMDb Topliste" to "$mainUrl/imdb-rating/", "Alle Filme" to "$mainUrl/archiv/")
             .forEach { (title, url) ->
                 try {
-                    val items = preloadListing(url)
+                    val items = preloadListing(url) { onProgress("$title: $it") }
                     if (items.isNotEmpty()) sections += HomePageList(title, items)
                 } catch (e: Exception) {
+                    complete = false
                     Log.w(TAG, "$title fehlgeschlagen: ${e.message}")
                 }
             }
 
         for ((genre, slug) in CATEGORIES) {
             try {
-                val items = preloadListing("$mainUrl/$slug/")
+                val items = preloadListing("$mainUrl/$slug/") { onProgress("$genre: $it") }
                 if (items.isNotEmpty()) sections += HomePageList(genre, items)
             } catch (e: Exception) {
+                complete = false
                 Log.w(TAG, "Kategorie '$slug' fehlgeschlagen: ${e.message}")
             }
         }
 
         KellerkinoCoverStore.save()
-        return newHomePageResponse(sections, hasNext = false)
+        if (!complete || sections.isEmpty()) {
+            throw IllegalStateException("Katalog nicht vollständig geladen. Vorhandener Katalog bleibt erhalten; bitte später erneut versuchen.")
+        }
+        val catalog = KellerkinoCatalogStore.Catalog(System.currentTimeMillis(), sections.map { section ->
+            KellerkinoCatalogStore.Row(section.name, section.list.map { movie ->
+                KellerkinoCatalogStore.Movie(movie.name, movie.url, movie.posterUrl)
+            })
+        })
+        KellerkinoCatalogStore.save(catalog)
+        cachedCatalog = catalog
+        catalog
     }
 
     suspend fun syncCovers(): Int {
@@ -123,7 +182,7 @@ open class KellerkinoProvider : MainAPI() {
         KellerkinoCoverStore.clear()
     }
 
-    private suspend fun preloadListing(baseUrl: String): List<SearchResponse> {
+    private suspend fun preloadListing(baseUrl: String, onProgress: (String) -> Unit = {}): List<SearchResponse> {
         listingCache[baseUrl]?.let { (timestamp, cached) ->
             if (System.currentTimeMillis() - timestamp < CACHE_TTL_MS) return cached
         }
@@ -131,7 +190,7 @@ open class KellerkinoProvider : MainAPI() {
         val first = getDocument(baseUrl)
         val result = mutableListOf<SearchResponse>()
         result += first.select("article.movie-card").mapNotNull { it.toMovieCard() }
-        if (result.isEmpty()) return emptyList()
+        if (result.isEmpty()) throw IllegalStateException("Keine Filme gefunden: $baseUrl")
 
         val pageLinks = first.select(".pagination a.page-numbers[href*='seite/']")
         val firstHref = pageLinks.firstOrNull()?.attr("href")
@@ -139,24 +198,31 @@ open class KellerkinoProvider : MainAPI() {
         val maxPage = pageLinks.mapNotNull { link ->
             Regex("""/seite/(\d+)""").find(link.attr("href"))?.groupValues?.get(1)?.toIntOrNull()
         }.maxOrNull() ?: 1
+        onProgress("Seite 1 von $maxPage")
+        var failed = false
 
         if (maxPage > 1) {
             for (batch in (2..maxPage).toList().chunked(PAGE_BATCH)) {
                 val pages = batch.amap { page ->
                     try {
-                        getDocument("${baseUrl}seite/$page/$query")
+                        val items = getDocument("${baseUrl}seite/$page/$query")
                             .select("article.movie-card").mapNotNull { it.toMovieCard() }
+                        if (items.isEmpty()) throw IllegalStateException("Leere Filmseite $page")
+                        items
                     } catch (e: Exception) {
                         Log.w(TAG, "Seite $page von $baseUrl fehlgeschlagen: ${e.message}")
                         emptyList()
                     }
                 }
+                if (pages.any { it.isEmpty() }) failed = true
                 pages.forEach { result += it }
+                onProgress("Seite ${batch.last()} von $maxPage")
             }
         }
 
         val distinct = result.distinctBy { it.url }
         KellerkinoCoverStore.save()
+        if (failed) throw IllegalStateException("Nicht alle Seiten geladen: $baseUrl")
         if (distinct.isNotEmpty()) listingCache[baseUrl] = System.currentTimeMillis() to distinct
         return distinct
     }
@@ -312,6 +378,10 @@ open class KellerkinoProvider : MainAPI() {
         private const val DESKTOP_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         private const val PAGE_BATCH = 8
         private const val CACHE_TTL_MS = 2L * 60 * 60 * 1000
+        private const val CATALOG_TTL_MS = 24L * 60 * 60 * 1000
+        private val catalogMutex = Mutex()
+        private val refreshStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+        @Volatile private var cachedCatalog: KellerkinoCatalogStore.Catalog? = null
 
         private val listingCache = java.util.concurrent.ConcurrentHashMap<String, Pair<Long, List<SearchResponse>>>()
 

@@ -27,13 +27,40 @@ class KellerkinoPlugin : Plugin() {
             }
             val sync = Button(ctx).apply { text = "Covers sync" }
             val clear = Button(ctx).apply { text = "Covers leeren" }
+            val update = Button(ctx).apply { text = "Katalog aktualisieren" }
+            update.setOnClickListener {
+                update.isEnabled = false
+                sync.isEnabled = false
+                clear.isEnabled = false
+                val handler = Handler(Looper.getMainLooper())
+                Thread {
+                    val result = runCatching {
+                        runBlocking {
+                            provider.updateCatalog { progress ->
+                                handler.post { status.text = progress }
+                            }
+                        }
+                    }
+                    handler.post {
+                        update.isEnabled = true
+                        sync.isEnabled = true
+                        clear.isEnabled = true
+                        status.text = result.fold(
+                            onSuccess = { "$it Filme gespeichert. Kellerkino-Startseite erneut öffnen." },
+                            onFailure = { "Aktualisierung fehlgeschlagen: ${it.message}" }
+                        )
+                    }
+                }.start()
+            }
             sync.setOnClickListener {
+                update.isEnabled = false
                 sync.isEnabled = false
                 clear.isEnabled = false
                 status.text = "Covers werden über alle Archivseiten synchronisiert …"
                 Thread {
                     val result = runCatching { runBlocking { provider.syncCovers() } }
                     Handler(Looper.getMainLooper()).post {
+                        update.isEnabled = true
                         sync.isEnabled = true
                         clear.isEnabled = true
                         status.text = "${KellerkinoCoverStore.count()} Covers auf diesem Gerät gespeichert"
@@ -52,6 +79,7 @@ class KellerkinoPlugin : Plugin() {
                 orientation = LinearLayout.VERTICAL
                 setPadding(48, 24, 48, 24)
                 addView(status)
+                addView(update)
                 addView(sync)
                 addView(clear)
             }

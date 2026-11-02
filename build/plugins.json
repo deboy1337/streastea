@@ -25,10 +25,10 @@
     "authors": [
       "Streamable"
     ],
-    "description": "Ein Film für jeden Geschmack - Kellerkino.com (v3)",
-    "fileHash": "sha256-23b30dc8bdc588fc689dcf17427e368b53e08176ba0a294d7d7b4ec6a9e3e5cd",
-    "fileSize": 36461,
-    "hash": "23b30dc8bdc588fc689dcf17427e368b53e08176ba0a294d7d7b4ec6a9e3e5cd",
+    "description": "Ein Film für jeden Geschmack - Kellerkino.com (v4)",
+    "fileHash": "sha256-2c7e01dd57e3e8e5412c63725dac35b0275557ee966c622e1177778c0f2324bb",
+    "fileSize": 49779,
+    "hash": "2c7e01dd57e3e8e5412c63725dac35b0275557ee966c622e1177778c0f2324bb",
     "iconUrl": "https://www.google.com/s2/favicons?domain=https://www.kellerkino.com&sz=%size%",
     "internalName": "Kellerkino",
     "language": "de",
@@ -39,6 +39,6 @@
       "Movie"
     ],
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Kellerkino.cs3",
-    "version": 3
+    "version": 4
   }
 ]
