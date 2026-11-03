@@ -21,7 +21,7 @@ internal object SerienstreamCoverStore {
             JSONObject(getKey<String>(SerienstreamProvider.SETTING_POSTER_MAP) ?: "{}")
         }.getOrNull()
         json?.keys()?.forEach { url ->
-            json.optString(url).takeIf { it.isNotBlank() }?.let { restored[key(url)] = it }
+            json.optString(url).takeIf { SerienstreamPosters.isUsable(it) }?.let { restored[key(url)] = it }
         }
         posters = restored
         return restored
@@ -30,7 +30,7 @@ internal object SerienstreamCoverStore {
     fun resolve(url: String, poster: String?): String? = synchronized(lock) {
         val entries = entries()
         val key = key(url)
-        if (!poster.isNullOrBlank() && entries[key] != poster) {
+        if (poster != null && SerienstreamPosters.isUsable(poster) && entries[key] != poster) {
             entries[key] = poster
             dirty = true
         }

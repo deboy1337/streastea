@@ -63,6 +63,10 @@ class SerienstreamPlugin : Plugin() {
                 text = "Covers sync"
                 setPadding(dp(16), dp(8), dp(16), dp(8))
                 setOnClickListener {
+                    if (SerienstreamProvider.isCoverSyncRunning()) {
+                        label.text = SerienstreamProvider.getCoverSyncStatus()
+                        return@setOnClickListener
+                    }
                     setKey(SerienstreamProvider.SETTING_EMAIL, emailInput.text.toString())
                     setKey(SerienstreamProvider.SETTING_PASSWORD, passwordInput.text.toString())
                     coverControls.forEach { it.isEnabled = false }
@@ -106,6 +110,24 @@ class SerienstreamPlugin : Plugin() {
                 }
             }
             coverControls.addAll(listOf(syncBtn, clearBtn))
+            val syncStatusHandler = android.os.Handler(android.os.Looper.getMainLooper())
+            val syncStatusPoll = object : Runnable {
+                private var wasRunning = false
+                override fun run() {
+                    val running = SerienstreamProvider.isCoverSyncRunning()
+                    if (running) {
+                        label.text = SerienstreamProvider.getCoverSyncStatus()
+                        syncBtn.text = "Cover-Sync läuft …"
+                        coverControls.forEach { it.isEnabled = false }
+                    } else if (wasRunning) {
+                        label.text = "${SerienstreamProvider.getCoverSyncStatus()}\n${SerienstreamCoverStore.count()} Covers gespeichert"
+                        syncBtn.text = "Covers sync"
+                        coverControls.forEach { it.isEnabled = true }
+                    }
+                    wasRunning = running
+                    syncStatusHandler.postDelayed(this, 500)
+                }
+            }
 
             val captchaBtn = Button(ctx).apply {
                 id = View.generateViewId()
@@ -360,6 +382,8 @@ class SerienstreamPlugin : Plugin() {
                 .setNeutralButton("Schließen", null)
                 .create()
             settingsDialog.show()
+            settingsDialog.setOnDismissListener { syncStatusHandler.removeCallbacks(syncStatusPoll) }
+            syncStatusHandler.post(syncStatusPoll)
             settingsDialog.window?.apply {
                 setLayout(minOf(dp(640), (ctx.resources.displayMetrics.widthPixels * 0.95).toInt()),
                     ViewGroup.LayoutParams.WRAP_CONTENT)
