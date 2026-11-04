@@ -1,8 +1,8 @@
-version = 1
+version = 2
 
 cloudstream {
     language = "de"
-    description = "Animes online ansehen und streamen - AniWorld.to (v1)"
+    description = "Animes online ansehen und streamen - AniWorld.to (v2)"
     authors = listOf("Streamable")
 
     status = 1

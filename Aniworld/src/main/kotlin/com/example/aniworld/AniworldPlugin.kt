@@ -5,8 +5,10 @@ import android.content.Context
 import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
+import android.text.method.PasswordTransformationMethod
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -30,14 +32,18 @@ class AniworldPlugin : Plugin() {
             val email = EditText(ctx).apply {
                 id = View.generateViewId()
                 hint = "Email"
+                isFocusable = true
+                isFocusableInTouchMode = true
                 setText(getKey<String>(AniworldProvider.SETTING_EMAIL) ?: "")
                 setSingleLine()
             }
             val password = EditText(ctx).apply {
                 id = View.generateViewId()
                 hint = "Passwort"
-                inputType = android.text.InputType.TYPE_CLASS_TEXT or
-                    android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+                isFocusable = true
+                isFocusableInTouchMode = true
+                inputType = android.text.InputType.TYPE_CLASS_TEXT
+                transformationMethod = PasswordTransformationMethod.getInstance()
                 setText(getKey<String>(AniworldProvider.SETTING_PASSWORD) ?: "")
                 setSingleLine()
             }
@@ -96,8 +102,17 @@ class AniworldPlugin : Plugin() {
                     ))
                 }
             }
-            val scroll = ScrollView(ctx).apply { addView(layout) }
-            AlertDialog.Builder(ctx)
+            val fields = listOf(email, password, sync, clear)
+            fields.forEachIndexed { index, view ->
+                if (index > 0) view.nextFocusUpId = fields[index - 1].id
+                if (index < fields.lastIndex) view.nextFocusDownId = fields[index + 1].id
+            }
+            val scroll = ScrollView(ctx).apply {
+                isFocusable = false
+                descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+                addView(layout)
+            }
+            val dialog = AlertDialog.Builder(ctx)
                 .setTitle("AniWorld Einstellungen")
                 .setView(scroll)
                 .setPositiveButton("Speichern") { _, _ ->
@@ -109,7 +124,17 @@ class AniworldPlugin : Plugin() {
                     setKey(AniworldProvider.SETTING_PASSWORD, "")
                 }
                 .setNeutralButton("Schließen", null)
-                .show()
+                .create()
+            dialog.show()
+            dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            val save = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            save.id = View.generateViewId()
+            clear.nextFocusDownId = save.id
+            save.nextFocusUpId = clear.id
+            email.nextFocusDownId = password.id
+            password.nextFocusUpId = email.id
+            password.nextFocusDownId = sync.id
+            password.requestFocus()
         }
     }
 }
