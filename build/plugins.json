@@ -40,5 +40,26 @@
     ],
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Kellerkino.cs3",
     "version": 4
+  },
+  {
+    "apiVersion": 1,
+    "authors": [
+      "Streamable"
+    ],
+    "description": "Animes online ansehen und streamen - AniWorld.to (v1)",
+    "fileHash": "sha256-72532f1abde861193598a72efd893967418c5b2f7025c3c8c56a38121b0d45d2",
+    "fileSize": 33817,
+    "hash": "72532f1abde861193598a72efd893967418c5b2f7025c3c8c56a38121b0d45d2",
+    "iconUrl": "https://www.google.com/s2/favicons?domain=https://aniworld.to&sz=%size%",
+    "internalName": "Aniworld",
+    "language": "de",
+    "name": "AniWorld",
+    "repositoryUrl": "https://github.com/deboy1337/streastea",
+    "status": 1,
+    "tvTypes": [
+      "Anime"
+    ],
+    "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Aniworld.cs3",
+    "version": 1
   }
 ]
