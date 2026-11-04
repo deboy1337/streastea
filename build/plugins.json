@@ -46,10 +46,10 @@
     "authors": [
       "Streamable"
     ],
-    "description": "Animes online ansehen und streamen - AniWorld.to (v2)",
-    "fileHash": "sha256-0c670f8b325e76c56f3cb82db931cf07695fac50bf5777c7e7d1aabe558e3487",
-    "fileSize": 34530,
-    "hash": "0c670f8b325e76c56f3cb82db931cf07695fac50bf5777c7e7d1aabe558e3487",
+    "description": "Animes online ansehen und streamen - AniWorld.to (v3)",
+    "fileHash": "sha256-f4f24e785065c8df7c57a8e6ee1d9bd5cdc1e11bd6b75e911966b9537db05ba0",
+    "fileSize": 39041,
+    "hash": "f4f24e785065c8df7c57a8e6ee1d9bd5cdc1e11bd6b75e911966b9537db05ba0",
     "iconUrl": "https://www.google.com/s2/favicons?domain=https://aniworld.to&sz=%size%",
     "internalName": "Aniworld",
     "language": "de",
@@ -60,6 +60,6 @@
       "Anime"
     ],
     "url": "https://raw.githubusercontent.com/deboy1337/streastea/builds/Aniworld.cs3",
-    "version": 2
+    "version": 3
   }
 ]

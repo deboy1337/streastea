@@ -23,7 +23,6 @@ import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.jsoup.Jsoup
-import org.jsoup.nodes.Element
 import java.net.URI
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -43,11 +42,12 @@ open class AniworldProvider : MainAPI() {
 
     private fun document(url: String): org.jsoup.nodes.Document {
         val full = if (url.startsWith("http")) url else "$mainUrl$url"
-        val response = client.newCall(
+        val html = client.newCall(
             Request.Builder().url(full).header("User-Agent", UA).header("Referer", mainUrl).build()
-        ).execute()
-        val html = response.body.string()
-        if (!response.isSuccessful) throw RuntimeException("HTTP ${response.code}: $full")
+        ).execute().use { response ->
+            if (!response.isSuccessful) throw RuntimeException("HTTP ${response.code}: $full")
+            response.body.string()
+        }
         val doc = Jsoup.parse(html, full)
         if (doc.title().contains("Just a moment", true)) throw RuntimeException("Cloudflare-Challenge")
         return doc
@@ -58,17 +58,13 @@ open class AniworldProvider : MainAPI() {
         val sections = mutableListOf<HomePageList>()
         try {
             val home = document(mainUrl)
-            listOf(
-                "Beliebt bei AniWorld",
-                "Neue Animes",
-                "Derzeit beliebt",
-                "Das sehen andere AniWorld Nutzer"
-            ).forEach { title ->
-                val heading = home.select("h1, h2").firstOrNull { it.text().contains(title) } ?: return@forEach
-                val box = heading.parent()?.parent()?.nextElementSibling() ?: heading.parent()?.nextElementSibling()
-                val items = box?.select("a[href*='/anime/stream/']")?.mapNotNull { it.toSeriesCard() }
-                    ?.distinctBy { it.url }.orEmpty()
-                if (items.isNotEmpty()) sections += HomePageList(title, items)
+            AniworldCatalog.home(home, mainUrl).forEach { row ->
+                val items = row.anime.map { anime ->
+                    newTvSeriesSearchResponse(anime.title, anime.url, TvType.Anime) {
+                        posterUrl = AniworldCoverStore.resolve(anime.url, anime.poster)
+                    }
+                }
+                sections += HomePageList(row.title, items)
             }
             val latest = home.select("a[href*='/staffel-'][href*='/episode-']").mapNotNull { link ->
                 val href = fixUrlNull(link.attr("href")) ?: return@mapNotNull null
@@ -79,25 +75,25 @@ open class AniworldProvider : MainAPI() {
                     posterUrl = AniworldCoverStore.resolve(series, null)
                 }
             }.distinctBy { it.name }.take(50)
-            if (latest.isNotEmpty()) sections.add(0, HomePageList("Die 50 neuesten Episoden", latest))
+            if (latest.isNotEmpty()) sections.add(
+                if (sections.firstOrNull()?.name == "Beliebt bei AniWorld") 1 else 0,
+                HomePageList("Die 50 neuesten Episoden", latest)
+            )
         } catch (e: Exception) {
             Log.w(TAG, "Startseite: ${e.message}")
         }
 
         try {
             val genres = document("/animes-genres")
-            genres.select("h3").forEach { heading ->
-                val name = heading.text().trim()
-                if (name.isBlank() || name.contains("Hilfe")) return@forEach
-                val list = heading.nextElementSibling()?.takeIf { it.tagName() == "ul" } ?: return@forEach
-                val items = list.select("a[href*='/anime/stream/']").mapNotNull { link ->
-                    val href = fixUrlNull(link.attr("href")) ?: return@mapNotNull null
-                    val title = link.text().trim().ifBlank { return@mapNotNull null }
-                    newTvSeriesSearchResponse(title, href, TvType.Anime) {
-                        posterUrl = AniworldCoverStore.resolve(href, null)
+            val rows = AniworldCatalog.genres(genres, mainUrl)
+            check(rows.isNotEmpty()) { "Keine Anime-Genres erkannt" }
+            rows.forEach { row ->
+                val items = row.anime.map { anime ->
+                    newTvSeriesSearchResponse(anime.title, anime.url, TvType.Anime) {
+                        posterUrl = AniworldCoverStore.resolve(anime.url, null)
                     }
                 }
-                if (items.isNotEmpty()) sections += HomePageList(name, items)
+                sections += HomePageList(row.title, items)
             }
         } catch (e: Exception) {
             Log.w(TAG, "Genres: ${e.message}")
@@ -210,20 +206,6 @@ open class AniworldProvider : MainAPI() {
         return found
     }
 
-    private fun Element.toSeriesCard(): SearchResponse? {
-        val href = attr("href")
-        if (!href.contains("/anime/stream/") || href.contains("/staffel-") || href.contains("/episode-")) return null
-        val url = fixUrlNull(href) ?: return null
-        val title = attr("title").substringBefore(" als ").substringBefore(" alle ").substringBefore(" jetzt ")
-            .ifBlank { selectFirst("h3, h6, strong")?.text().orEmpty() }.trim()
-        if (title.isBlank()) return null
-        val image = selectFirst("img")
-        val poster = image?.attr("data-src")?.ifBlank { image.attr("src") }?.let { fixUrlNull(it) }
-        return newTvSeriesSearchResponse(title, url, TvType.Anime) {
-            this.posterUrl = AniworldCoverStore.resolve(url, poster?.takeUnless { it.startsWith("data:") })
-        }
-    }
-
     private fun seriesUrl(url: String): String {
         val path = URI(url).path.substringAfter("/anime/stream/").substringBefore("/")
         return "$mainUrl/anime/stream/$path"
@@ -255,29 +237,50 @@ open class AniworldProvider : MainAPI() {
                 val provider = AniworldProvider()
                 progress("Genres laden …")
                 val genres = provider.document("/animes-genres")
-                val series = genres.select("h3").flatMap { heading ->
-                    if (heading.text().contains("Hilfe")) emptyList()
-                    else heading.nextElementSibling()?.takeIf { it.tagName() == "ul" }
-                        ?.select("a[href*='/anime/stream/']").orEmpty()
-                }.mapNotNull { provider.run { fixUrlNull(it.attr("href")) } }.distinct()
+                val series = AniworldCatalog.genres(genres, provider.mainUrl)
+                    .flatMap { it.anime }.map { it.url }.distinct()
                 check(series.isNotEmpty()) { "Keine Animes gefunden" }
+                val pending = series.filter { AniworldCoverStore.resolve(it, null).isNullOrBlank() }
                 val failed = mutableListOf<String>()
-                series.chunked(6).forEachIndexed { index, batch ->
-                    progress("Cover ${index * 6}/${series.size} – ${AniworldCoverStore.count()} gespeichert")
-                    val found = batch.mapNotNull { url ->
-                        runCatching {
-                            val page = provider.document(url)
-                            val image = page.selectFirst("img[data-src*='/public/img/cover/'], img[src*='/public/img/cover/']")
-                            val poster = image?.attr("data-src")?.ifBlank { image.attr("src") }?.let { provider.run { fixUrlNull(it) } }
-                            if (poster.isNullOrBlank()) null else url to poster
-                        }.onFailure { failed += "${URI(url).path.substringAfterLast('/')}: ${it.message}" }.getOrNull()
-                    }.toMap()
-                    if (found.isNotEmpty()) AniworldCoverStore.mergeAndSave(found)
+                val workers = java.util.concurrent.Executors.newFixedThreadPool(4)
+                try {
+                    pending.chunked(6).forEachIndexed { index, batch ->
+                        progress("Fehlende Cover ${index * 6}/${pending.size} – ${AniworldCoverStore.count()} gespeichert")
+                        val tasks = batch.map { url ->
+                            workers.submit(java.util.concurrent.Callable {
+                                val page = provider.document(url)
+                                val image = page.selectFirst("img[data-src*='/public/img/cover/'], img[src*='/public/img/cover/']")
+                                val poster = image?.let { AniworldCatalog.poster(it, provider.mainUrl) }
+                                checkNotNull(poster) { "Kein Cover erkannt" }
+                                url to poster
+                            })
+                        }
+                        val found = tasks.mapIndexedNotNull { itemIndex, task ->
+                            try {
+                                task.get()
+                            } catch (e: InterruptedException) {
+                                Thread.currentThread().interrupt()
+                                throw e
+                            } catch (e: Exception) {
+                                failed += "${URI(batch[itemIndex]).path.substringAfterLast('/')}: ${e.cause?.message ?: e.message}"
+                                null
+                            }
+                        }.toMap()
+                        if (found.isNotEmpty()) AniworldCoverStore.mergeAndSave(found)
+                        progress("Fehlende Cover ${index * 6 + batch.size}/${pending.size} – ${AniworldCoverStore.count()} gespeichert")
+                    }
+                } finally {
+                    workers.shutdownNow()
                 }
                 val count = AniworldCoverStore.count()
-                check(failed.size < series.size) { "Cover-Sync fehlgeschlagen. $count Covers bleiben gespeichert." }
-                status = "$count Covers gespeichert" + if (failed.isEmpty()) "" else ", ${failed.size} fehlgeschlagen"
+                check(failed.isEmpty()) {
+                    "${failed.size} Covers konnten nicht geladen werden. $count bleiben gespeichert. ${failed.first()}"
+                }
+                status = "$count Covers gespeichert"
                 return count
+            } catch (e: Exception) {
+                status = "Cover-Sync fehlgeschlagen: ${e.message}"
+                throw e
             } finally {
                 running.set(false)
             }
